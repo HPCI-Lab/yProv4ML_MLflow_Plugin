@@ -4,7 +4,7 @@ from pathlib import Path
 import pandas as pd
 from prov.model import ProvDocument, QualifiedName, ProvActivity, ProvEntity  # ← import classes
 
-IN_ROOT = Path("data/prov")
+IN_ROOT = Path("data/prov/mnist_yprov_plugin")
 OUT_CSV = Path("data/unified/all_runs.csv")
 
 def load_prov_json(path: Path) -> ProvDocument:

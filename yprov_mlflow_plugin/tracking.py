@@ -72,6 +72,10 @@ class YProvTrackingStore(AbstractStore):
         self._store_uri = store_uri
         self._delegate = _delegate_for(store_uri)
         self._prov_out = Path(os.getenv('YPROV_OUT_DIR', 'data/prov'))
+    
+
+    def __getattr__(self, name):
+        return getattr(self._delegate, name)
 
     def create_run(self, experiment_id, user_id=None, start_time=None, tags=None, run_name=None, **kwargs):
         if yprov:
