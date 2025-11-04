@@ -31,7 +31,7 @@ except Exception:
 import mlflow
 from mlflow.tracking import MlflowClient
 
-# ---- Optional PROV exporter (we’ll call this explicitly at run end) ----
+# ---- Optional PROV exporter (we'll call this explicitly at run end) ----
 try:
     from yprov_mlflow_plugin.prov_export import export_run_to_prov
 except Exception:
@@ -101,6 +101,17 @@ def main():
         torch.manual_seed(args.seed)
         if args.device == "cuda" and torch.cuda.is_available():
             torch.cuda.manual_seed_all(args.seed)
+
+    # ========== CRITICAL FIX: Set tracking URI to use your plugin ==========
+    # Get the absolute path to mlruns directory
+    mlruns_path = Path("./mlruns").resolve()
+    mlruns_path.mkdir(parents=True, exist_ok=True)
+    
+    # Set tracking URI with yprov+ prefix to activate the plugin
+    tracking_uri = f"yprov+file://{mlruns_path}"
+    mlflow.set_tracking_uri(tracking_uri)
+    print(f"🔧 Using tracking URI: {tracking_uri}")
+    # ========================================================================
 
     # Prepare artifact location & experiment
     artifact_dir = Path(args.artifact_dir).resolve()
@@ -273,7 +284,10 @@ def main():
             except Exception:
                 pass
 
-        # --------- NEW: always export PROV JSON for this run ---------
+        print(f"✅ Run {run_id} completed. PROV export will be triggered by plugin on run end.")
+
+    # Note: When the context manager exits, mlflow.end_run() is called,
+    # which should now trigger your plugin's set_terminated/update_run_info methods
         try:
             if export_run_to_prov is not None:
                 # Prefer env var; fallback to data/prov/<experiment_name>
@@ -291,7 +305,7 @@ def main():
 
     print("✅ Run finished.")
     print("Artifacts directory:", artifact_dir)
-    print("To launch MLflow UI:", "mlflow ui --backend-store-uri", mlflow.get_tracking_uri())
+    print("To launch MLflow UI:", "mlflow ui --backend-store-uri", tracking_uri)
 
 
 if __name__ == "__main__":
