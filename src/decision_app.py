@@ -26,11 +26,25 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 # ----------------------------- Optional deps -----------------------------
+
+
 try:
-    from sklearn.cluster import KMeans
+    import shap
+    from sklearn.preprocessing import OneHotEncoder, StandardScaler
+    from sklearn.compose import ColumnTransformer
+    from sklearn.pipeline import Pipeline
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering, SpectralClustering
+    from sklearn.preprocessing import StandardScaler  # used for distance-based method
+    SHAP_OK = True
     SKLEARN_OK = True
 except Exception:
+    SHAP_OK = False
     SKLEARN_OK = False
+
+
+
 
 # ----------------------------- Cache loaders -----------------------------
 @st.cache_data(show_spinner=False)
@@ -182,6 +196,151 @@ def neighbor_grid(val, scale=0.5, n=3):
         return sorted(set([v, v*(1-scale), v*(1+scale)]))[:n]
     except Exception:
         return [val]
+    
+def run_clustering(df_in: pd.DataFrame, x_col: str, y_col: str, method: str, params: dict):
+    """
+    Cluster on two selected metrics (x=cost, y=accuracy) with different algorithms.
+    Returns (labels or None, fitted_model or None, df_used)
+    """
+    # Only rows that have both metrics
+    df_used = df_in.dropna(subset=[x_col, y_col]).copy()
+    if df_used.empty:
+        return None, None, df_used
+
+    X = df_used[[x_col, y_col]].to_numpy()
+
+    # Scale for distance-based clustering (DBSCAN/Agglo/Spectral). KMeans is fine either way.
+    scale_needed = method in {"DBSCAN", "Agglomerative", "Spectral"}
+    if scale_needed:
+        try:
+            X = StandardScaler().fit_transform(X)
+        except Exception:
+            # simple fallback standardization
+            X = (X - X.mean(axis=0)) / (X.std(axis=0) + 1e-9)
+
+    model = None
+    labels = None
+
+    if method == "KMeans":
+        k = int(params.get("k", 3))
+        init = params.get("init", "k-means++")
+        try:
+            model = KMeans(n_clusters=k, n_init="auto", init=init, random_state=42)
+        except TypeError:
+            model = KMeans(n_clusters=k, n_init=10, init=init, random_state=42)
+        labels = model.fit_predict(X)
+
+    elif method == "DBSCAN":
+        eps = float(params.get("eps", 0.5))
+        min_samples = int(params.get("min_samples", 5))
+        model = DBSCAN(eps=eps, min_samples=min_samples)
+        labels = model.fit_predict(X)
+        # DBSCAN labels: -1 = noise; map noise to its own cluster label string later in plots
+
+    elif method == "Agglomerative":
+        k = int(params.get("k", 3))
+        linkage = params.get("linkage", "ward")  # 'ward'| 'complete' | 'average' | 'single'
+        # Ward requires euclidean and n_clusters > 1
+        model = AgglomerativeClustering(n_clusters=k, linkage=linkage)
+        labels = model.fit_predict(X)
+
+    elif method == "Spectral":
+        k = int(params.get("k", 3))
+        assign = params.get("assign_labels", "kmeans")  # 'kmeans' or 'discretize'
+        model = SpectralClustering(n_clusters=k, assign_labels=assign, random_state=42, affinity="rbf")
+        labels = model.fit_predict(X)
+
+    else:
+        raise ValueError(f"Unknown clustering method: {method}")
+
+    return labels, model, df_used
+
+    
+def get_param_feature_types(df: pd.DataFrame, pcols: list):
+    """Split param columns into numeric vs categorical."""
+    pcols = [c for c in pcols if c in df.columns]
+    num_cols, cat_cols = [], []
+    for c in pcols:
+        if pd.api.types.is_numeric_dtype(df[c]):
+            num_cols.append(c)
+        else:
+            cat_cols.append(c)
+    return num_cols, cat_cols
+
+def build_surrogate_pipeline(model_key: str, num_cols: list, cat_cols: list):
+    """Return a sklearn Pipeline with preprocessing + chosen classifier."""
+    # Choose model
+    if model_key == "Logistic Regression":
+        clf = LogisticRegression(max_iter=1000)
+    elif model_key == "Random Forest":
+        clf = RandomForestClassifier(n_estimators=200, random_state=42)
+    else:
+        raise ValueError(f"Unknown surrogate model: {model_key}")
+
+    # Preprocess
+    transformers = []
+    if num_cols:
+        transformers.append(("num", StandardScaler(), num_cols))
+    if cat_cols:
+        transformers.append(("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), cat_cols))
+
+    if not transformers:
+        # fallback: no params? will be handled upstream
+        pre = "passthrough"
+    else:
+        pre = ColumnTransformer(transformers, remainder="drop")
+
+    pipe = Pipeline([("pre", pre), ("clf", clf)])
+    return pipe
+
+def get_feature_names_after_pre(proc: ColumnTransformer, num_cols: list, cat_cols: list):
+    """Get names after ColumnTransformer for SHAP labeling."""
+    names = []
+    if num_cols:
+        names.extend(num_cols)
+    if cat_cols:
+        # pull OneHotEncoder categories
+        ohe = None
+        for name, trans, cols in proc.transformers_:
+            if name == "cat":
+                ohe = trans
+                used_cols = cols
+                break
+        if ohe is not None and hasattr(ohe, "get_feature_names_out"):
+            names.extend(list(ohe.get_feature_names_out(used_cols)))
+        else:
+            # fallback generic names
+            for c in cat_cols:
+                names.append(f"{c}_encoded")
+    return names or None
+
+def compute_shap_values(pipe: Pipeline, X: pd.DataFrame):
+    """Return (explainer, shap_values, is_multiclass)."""
+    clf = pipe.named_steps["clf"]
+    pre = pipe.named_steps["pre"]
+    Xp = pre.transform(X)
+
+    # Pick explainer by model family
+    try:
+        if isinstance(clf, RandomForestClassifier):
+            explainer = shap.TreeExplainer(clf)
+            shap_values = explainer.shap_values(Xp)
+        elif isinstance(clf, LogisticRegression):
+            # Use a small background for stability
+            bg = shap.sample(Xp, min(200, Xp.shape[0])) if Xp.shape[0] > 200 else Xp
+            explainer = shap.LinearExplainer(clf, bg)
+            shap_values = explainer.shap_values(Xp)
+        else:
+            # Generic fallback
+            bg = shap.sample(Xp, min(200, Xp.shape[0])) if Xp.shape[0] > 200 else Xp
+            explainer = shap.KernelExplainer(clf.predict_proba, bg)
+            shap_values = explainer.shap_values(Xp)
+    except Exception as e:
+        raise RuntimeError(f"SHAP computation failed: {e}")
+
+    multiclass = isinstance(shap_values, list)
+    return explainer, shap_values, multiclass, Xp
+
 
 # ----------------------------- UI -----------------------------
 st.set_page_config(page_title="yProv4ML Decision Support", layout="wide")
@@ -215,17 +374,59 @@ if df is None:
 id_col = detect_id_column(df)
 pcols = param_cols(df)
 ncols = numeric_cols(df)
-acc_cands = candidate_accuracy_cols(df)
-cost_cands = [c for c in candidate_cost_cols(df) if c != id_col]  # don't suggest ID as cost
+
+# helper: filter out anything ID-like
+ID_EXACT = {"id", "run_id", "run", "exp", "experiment"}
+def is_id_like(name: str) -> bool:
+    n = str(name).strip().lower()
+    return (n in ID_EXACT) or n.endswith("_id")
+
+def drop_id_like(cols):
+    return [c for c in cols if not is_id_like(c)]
+
+acc_cands_raw  = candidate_accuracy_cols(df)
+cost_cands_raw = [c for c in candidate_cost_cols(df) if c != id_col]  # existing guard
+
+# Apply ID-like filter everywhere
+acc_cands  = drop_id_like(acc_cands_raw)
+cost_cands = drop_id_like(cost_cands_raw)
+ncols_no_id = drop_id_like(ncols)
+
+# Neutral = numeric metrics that aren't in either list and aren't params or ID-like
+neutral = [
+    c for c in ncols_no_id
+    if c not in set(acc_cands) | set(cost_cands)
+    and not str(c).startswith("param_")
+]
+
+# Show neutral candidates in BOTH dropdowns (dedup while preserving order)
+acc_options  = list(dict.fromkeys(acc_cands  + neutral))
+cost_options = list(dict.fromkeys(cost_cands + neutral))
 
 st.sidebar.header("2) Metrics & settings")
-acc_col = st.sidebar.selectbox("Accuracy metric (maximize)", options=(acc_cands or ncols), index=0)
-cost_col = st.sidebar.selectbox("Cost/Emission metric (minimize)", options=(cost_cands or ncols), index=0)
+acc_col  = st.sidebar.selectbox(
+    "Accuracy metric (maximize)",
+    options=(acc_options or ncols_no_id), index=0
+)
+cost_col = st.sidebar.selectbox(
+    "Cost/Emission metric (minimize)",
+    options=(cost_options or ncols_no_id), index=0
+)
+
+
 
 st.sidebar.subheader("Clustering")
 clustering_mode = st.sidebar.radio("Cluster on:", ["Full dataset", "Pareto-only"])
 n_clusters = st.sidebar.slider("KMeans: number of clusters", 2, 8, 3)
 annotate = st.sidebar.checkbox("Label points on plots", value=True)
+st.sidebar.subheader("Cluster explanations (SHAP)")
+surrogate_model = st.sidebar.selectbox(
+    "Surrogate model",
+    options=["Random Forest", "Logistic Regression"],
+    index=0,
+    key="surrogate_model"
+)
+
 
 # ----------------------------- Filter rows for selected metrics -----------------------------
 work = df.dropna(subset=[acc_col, cost_col]).copy()
@@ -297,43 +498,191 @@ st.plotly_chart(
 # ----------------------------- Clustering -----------------------------
 st.subheader("Clustering")
 cluster_df = front if clustering_mode == "Pareto-only" else work
-labels = None
 
-if SKLEARN_OK and len(cluster_df) >= n_clusters:
-    model, labels = kmeans_cluster(cluster_df, [acc_col, cost_col], n_clusters=n_clusters)
-    if labels is not None:
-        cluster_df = cluster_df.copy()
-        cluster_df["cluster"] = labels
-        st.write(f"**KMeans clusters** on {clustering_mode} set: K={n_clusters}")
+# Sidebar controls for method & params
+st.sidebar.subheader("Clustering")
+method = st.sidebar.selectbox("Method", ["KMeans", "DBSCAN", "Agglomerative", "Spectral"], index=0)
 
-        cluster_df["cluster_label"] = cluster_df["cluster"].astype(str)
-        PALETTE = px.colors.qualitative.Set2
+# Shared + per-method controls
+if method == "KMeans":
+    k = st.sidebar.slider("K (clusters)", 2, 12, 3)
+    init = st.sidebar.selectbox("Init", ["k-means++", "random"], index=0)
+    params = {"k": k, "init": init}
+elif method == "DBSCAN":
+    eps = st.sidebar.slider("eps", 0.05, 5.0, 0.5, 0.05)
+    min_samples = st.sidebar.slider("min_samples", 2, 50, 5, 1)
+    params = {"eps": eps, "min_samples": min_samples}
+elif method == "Agglomerative":
+    k = st.sidebar.slider("K (clusters)", 2, 12, 3)
+    linkage = st.sidebar.selectbox("Linkage", ["ward", "complete", "average", "single"], index=0)
+    params = {"k": k, "linkage": linkage}
+else:  # Spectral
+    k = st.sidebar.slider("K (clusters)", 2, 12, 3)
+    assign_labels = st.sidebar.selectbox("Assign labels", ["kmeans", "discretize"], index=0)
+    params = {"k": k, "assign_labels": assign_labels}
 
-        hover = cluster_df.apply(lambda r: make_tooltip_text(r, id_col, pcols, acc_col, cost_col), axis=1)
-        figc = px.scatter(
-            cluster_df,
-            x=cost_col, y=acc_col,
-            color="cluster_label",
-            color_discrete_sequence=PALETTE,
-            hover_name=id_col if (id_col and id_col in cluster_df.columns) else None,
-            hover_data=[c for c in pcols if c in cluster_df.columns],
-            title=f"Clusters on {clustering_mode.lower()} set"
-        )
-        figc.update_layout(legend_title_text="cluster", xaxis_title=cost_col, yaxis_title=acc_col)
-        if annotate and id_col and (id_col in cluster_df.columns):
-            figc.update_traces(text=cluster_df[id_col].astype(str), textposition="top center", selector=dict(mode="markers"))
-        st.plotly_chart(figc, use_container_width=True)
+annotate = st.sidebar.checkbox("Label points on plots", value=True, key="annotate_clusters")
 
-        with st.expander("Cluster-wise summary (mean/min/max/count)"):
-            summary = summarize_clusters(cluster_df, "cluster", [acc_col, cost_col])
-            st.dataframe(summary)
-    else:
-        st.info("Clustering skipped (insufficient rows).")
-else:
+labels, model, used = (None, None, cluster_df)
+if SKLEARN_OK and len(cluster_df) >= 2:
+    try:
+        labels, model, used = run_clustering(cluster_df, cost_col, acc_col, method, params)
+    except Exception as e:
+        st.warning(f"Clustering failed: {e}")
+
+if labels is None:
     if not SKLEARN_OK:
         st.warning("scikit-learn not installed; clustering disabled. `pip install scikit-learn`")
     else:
-        st.info("Not enough rows for clustering with current selection.")
+        st.info("Not enough rows or parameters for clustering with current selection.")
+else:
+    used = used.copy()
+    used["cluster"] = labels
+    # Normalize label names for legend (DBSCAN uses -1 for noise)
+    used["cluster_label"] = used["cluster"].apply(lambda z: "noise" if z == -1 else str(z))
+
+    st.write(f"**{method}** on {clustering_mode} set")
+
+    PALETTE = px.colors.qualitative.Set2
+    hover = used.apply(lambda r: make_tooltip_text(r, id_col, pcols, acc_col, cost_col), axis=1)
+    figc = px.scatter(
+        used,
+        x=cost_col, y=acc_col,
+        color="cluster_label",
+        color_discrete_sequence=PALETTE,
+        hover_name=id_col if (id_col and id_col in used.columns) else None,
+        hover_data=[c for c in pcols if c in used.columns],
+        title=f"{method} clusters on {clustering_mode.lower()} set"
+    )
+    figc.update_layout(legend_title_text="cluster", xaxis_title=cost_col, yaxis_title=acc_col)
+    if annotate and id_col and (id_col in used.columns):
+        figc.update_traces(text=used[id_col].astype(str), textposition="top center", selector=dict(mode="markers"))
+    st.plotly_chart(figc, use_container_width=True)
+
+    with st.expander("Cluster-wise summary (mean/min/max/count)"):
+        summary = summarize_clusters(used, "cluster", [acc_col, cost_col])
+        st.dataframe(summary)
+
+    # Keep a consistent `cluster_df` for SHAP section downstream
+    cluster_df = used
+
+# ----------------------------- Cluster explanations (SHAP) -----------------------------
+st.subheader("Cluster explanations (SHAP)")
+
+# 1) Features to use (params only)
+p_num, p_cat = get_param_feature_types(cluster_df, pcols)
+used_pcols = p_num + p_cat
+if not used_pcols:
+    st.info("No `param_*` columns available to explain clusters.")
+else:
+    # Drop constant params (no signal)
+    varying_pcols = [c for c in used_pcols if cluster_df[c].nunique(dropna=True) > 1]
+    if not varying_pcols:
+        st.info("All parameter columns are constant across selected runs; no signal to explain clusters.")
+    else:
+        X = cluster_df[varying_pcols].copy()
+        y = cluster_df["cluster"].astype(int).values
+
+        # Need at least 2 clusters
+        class_counts = pd.Series(y).value_counts().sort_index()
+        if class_counts.shape[0] < 2:
+            st.info("Clustering produced a single label. Need at least 2 clusters to compute explanations.")
+        else:
+            # 2) Fit surrogate
+            try:
+                pipe = build_surrogate_pipeline(
+                    surrogate_model,
+                    [c for c in varying_pcols if c in p_num],
+                    [c for c in varying_pcols if c in p_cat]
+                )
+                pipe.fit(X, y)
+            except Exception as e:
+                pipe = None
+                st.error(f"Could not fit surrogate model: {e}")
+
+            if pipe is not None:
+                # 3) Feature names after preprocessing
+                try:
+                    pre = pipe.named_steps["pre"]
+                    f_names = get_feature_names_after_pre(
+                        pre,
+                        [c for c in varying_pcols if c in p_num],
+                        [c for c in varying_pcols if c in p_cat]
+                    )
+                except Exception:
+                    f_names = varying_pcols
+
+                # 4) Try SHAP first
+                importances = None
+                try:
+                    explainer, shap_values, multiclass, Xp = compute_shap_values(pipe, X)
+                    Xp = np.asarray(Xp)
+                    if np.any(~np.isfinite(Xp)):
+                        Xp = np.nan_to_num(Xp, nan=0.0, posinf=1e9, neginf=-1e9)
+
+                    if multiclass:
+                        importances = np.mean(np.stack([np.abs(sv) for sv in shap_values], axis=0), axis=(0, 1))
+                    else:
+                        importances = np.mean(np.abs(shap_values), axis=0)
+                except Exception as e:
+                    st.caption(f"⚠️ SHAP could not be computed: {e}")
+                    importances = None
+
+                # 5) Fallback to model-native importances if SHAP missing/zero
+                fallback_used = False
+                if (importances is None) or (float(np.max(np.abs(importances))) == 0.0):
+                    clf = pipe.named_steps["clf"]
+                    if hasattr(clf, "feature_importances_"):
+                        importances = np.asarray(clf.feature_importances_)
+                        fallback_used = True
+                    elif hasattr(clf, "coef_"):
+                        coef = np.asarray(clf.coef_)
+                        importances = (np.mean(np.abs(coef), axis=0) if coef.ndim == 2 else np.abs(coef).ravel())
+                        fallback_used = True
+                    else:
+                        importances = None
+
+                # 6) Plot global importance (or show message)
+                if importances is None:
+                    st.info("Surrogate model provides no importances; cannot explain clusters.")
+                else:
+                    # Normalize names length to #features
+                    n_feats = int(len(importances))
+                    if not isinstance(f_names, list) or len(f_names) != n_feats:
+                        f_names_list = [f"f{i}" for i in range(n_feats)]
+                    else:
+                        f_names_list = list(f_names)
+
+                    order = np.argsort(importances)[::-1].ravel().tolist()
+                    names_sorted = [f_names_list[int(i)] for i in order]
+                    imps_sorted = np.asarray(importances)[order].ravel()
+
+                    # Dynamic slider bounded to available features
+                    k = st.slider(
+                        "Top features to show",
+                        min_value=1,
+                        max_value=int(n_feats),
+                        value=min(12, int(n_feats)),
+                        key="shap_topk_dynamic"
+                    )
+                    names_k = names_sorted[:k]
+                    imps_k = imps_sorted[:k].tolist()
+
+                    title_note = " (model-native importances)" if fallback_used else " (mean |SHAP|)"
+                    st.markdown(f"**Global feature importance** · Surrogate: _{surrogate_model}_{title_note}")
+                    try:
+                        fig_bar = px.bar(
+                            x=imps_k[::-1],
+                            y=names_k[::-1],
+                            orientation="h",
+                            title=f"Top {k} features",
+                            labels={"x": "importance", "y": "feature"}
+                        )
+                        st.plotly_chart(fig_bar, use_container_width=True)
+                    except Exception:
+                        st.write(pd.DataFrame({"feature": names_k, "importance": imps_k}))
+
+
 
 # ----------------------------- Prescriptive analytics -----------------------------
 st.subheader("Prescriptive analytics")
