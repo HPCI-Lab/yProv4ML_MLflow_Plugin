@@ -256,52 +256,86 @@ def main():
                 mlflow.log_metric("disk_usage", float(du.percent))
 
         # CodeCarbon totals (optional)
+        # CodeCarbon totals (optional)
         if tracker is not None:
             try:
                 emissions = tracker.stop()  # total CO2e (kg)
+                print(f"\n{'='*60}")
+                print("📊 CodeCarbon Debug Info")
+                print(f"{'='*60}")
+                print(f"Emissions (kg CO2e): {emissions}")
+                
                 totals = getattr(tracker, "final_emissions_data", None) or getattr(tracker, "_emissions_data", None)
+                print(f"Totals object type: {type(totals)}")
+                print(f"Totals object: {totals}")
+                
                 details = {}
                 if totals and hasattr(totals, "__dict__"):
                     details = {k: v for k, v in totals.__dict__.items() if not k.startswith("_")}
+                    print(f"Details from __dict__: {details}")
                 elif isinstance(totals, dict):
                     details = totals
+                    print(f"Details is dict: {details}")
+                else:
+                    print(f"⚠️  Could not extract details from totals!")
+                
+                print(f"\nAvailable keys in details: {list(details.keys())}")
+                print(f"{'='*60}\n")
 
                 def _maybe(*keys, default=None):
                     for k in keys:
                         if k in details and details[k] is not None:
-                            return float(details[k])
+                            value = float(details[k])
+                            print(f"  ✅ Found {k} = {value}")
+                            return value
+                    print(f"  ❌ None of {keys} found, using default={default}")
                     return default
 
+                # Log emissions (this should always work)
                 mlflow.log_metric("emissions", float(emissions))
-                mlflow.log_metric("emissions_rate", _maybe("emissions_rate", "emissions_rate_kg_s"))
-                mlflow.log_metric("energy_consumed", _maybe("energy_consumed", "energy_kwh"))
-                mlflow.log_metric("cpu_energy", _maybe("cpu_energy", "cpu_energy_kwh"))
-                mlflow.log_metric("gpu_energy", _maybe("gpu_energy", "gpu_energy_kwh"))
-                mlflow.log_metric("ram_energy", _maybe("ram_energy", "ram_energy_kwh"))
-                mlflow.log_metric("cpu_power", _maybe("cpu_average_power_watts"))
-                mlflow.log_metric("gpu_power", _maybe("gpu_average_power_watts"))
-                mlflow.log_metric("ram_power", _maybe("ram_power_watts"))
-            except Exception:
-                pass
+                print(f"✅ Logged emissions: {emissions}")
+                
+                # Try to log other metrics with debug output
+                rate = _maybe("emissions_rate", "emissions_rate_kg_s")
+                if rate is not None:
+                    mlflow.log_metric("emissions_rate", rate)
+                    
+                energy = _maybe("energy_consumed", "energy_kwh")
+                if energy is not None:
+                    mlflow.log_metric("energy_consumed", energy)
+                    
+                cpu_e = _maybe("cpu_energy", "cpu_energy_kwh")
+                if cpu_e is not None:
+                    mlflow.log_metric("cpu_energy", cpu_e)
+                    
+                gpu_e = _maybe("gpu_energy", "gpu_energy_kwh")
+                if gpu_e is not None:
+                    mlflow.log_metric("gpu_energy", gpu_e)
+                    
+                ram_e = _maybe("ram_energy", "ram_energy_kwh")
+                if ram_e is not None:
+                    mlflow.log_metric("ram_energy", ram_e)
+                    
+                cpu_p = _maybe("cpu_average_power_watts")
+                if cpu_p is not None:
+                    mlflow.log_metric("cpu_power", cpu_p)
+                    
+                gpu_p = _maybe("gpu_average_power_watts")
+                if gpu_p is not None:
+                    mlflow.log_metric("gpu_power", gpu_p)
+                    
+                ram_p = _maybe("ram_power_watts")
+                if ram_p is not None:
+                    mlflow.log_metric("ram_power", ram_p)
+                    
+            except Exception as e:
+                print(f"❌ CodeCarbon error: {e}")
+                import traceback
+                traceback.print_exc()
 
         print(f"✅ Run {run_id} completed. PROV export will be triggered by plugin on run end.")
 
-    # Note: When the context manager exits, mlflow.end_run() is called,
-    # which should now trigger your plugin's set_terminated/update_run_info methods
-        try:
-            if export_run_to_prov is not None:
-                # Prefer env var; fallback to data/prov/<experiment_name>
-                out_root = Path(os.getenv("YPROV_OUT_DIR", "data/prov"))
-                # If we don’t trust exp.name yet, fetch it from the run (robust)
-                exp_id = client.get_run(run_id).info.experiment_id
-                exp_name = client.get_experiment(exp_id).name or args.exp_name
-                out_dir = out_root / exp_name
-                export_run_to_prov(run_id, out_dir, client=client)
-                print(f"🟢 PROV JSON exported to: {out_dir}")
-            else:
-                print("ℹ️ yprov_mlflow_plugin.prov_export not available; skipping PROV export.")
-        except Exception as e:
-            print(f"⚠️ PROV export failed: {e}")
+    mlflow.end_run()
 
     print("✅ Run finished.")
     print("Artifacts directory:", artifact_dir)
