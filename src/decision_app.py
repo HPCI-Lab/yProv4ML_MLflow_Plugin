@@ -73,30 +73,35 @@ def ensure_unique_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 def clean_rows(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-
-    # 1) Drop fully empty rows
     df = df.dropna(how="all")
-
-    # 2) Remove accidental repeated header rows (row equals column names)
     try:
         header = list(df.columns.astype(str))
-        mask_is_header_row = df.astype(str).apply(lambda r: list(r.values) == header, axis=1)
+        mask_is_header_row = df.astype(str).apply(
+            lambda r: list(r.values) == header, axis=1
+        )
         if mask_is_header_row.any():
             df = df.loc[~mask_is_header_row]
     except Exception:
         pass
 
-    # 3) Strip whitespace from string cells (helps de-dup)
+    # 3) Strip whitespace from string cells
     df = df.apply(lambda s: s.str.strip() if s.dtype == "object" else s)
 
     # 4) Drop exact duplicate rows
     df = df.drop_duplicates()
 
-    # 5) Prefer uniqueness by run identifier if available
+    # 5) Prefer uniqueness by run identifier *only if it makes sense*
     if "run_id" in df.columns:
-        df = df.drop_duplicates(subset=["run_id"], keep="last")
+        col = df["run_id"]
+        # non-null count and unique non-null count
+        non_null = col.notna().sum()
+        nunique = col.nunique(dropna=True)
+        # Only dedup if there ARE non-null values AND actually repeated IDs
+        if non_null > 0 and nunique < non_null:
+            df = df.drop_duplicates(subset=["run_id"], keep="last")
 
     return df.reset_index(drop=True)
+
 
 
 def candidate_accuracy_cols(df: pd.DataFrame) -> List[str]:
