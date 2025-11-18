@@ -1,17 +1,26 @@
-# src/prov_to_csv.py
+# src/prov_to_csv.py - Updated to handle both CSV and NetCDF files
 import argparse
 import glob
 import re
 from pathlib import Path
 import pandas as pd
 from prov.model import ProvDocument, QualifiedName, ProvActivity, ProvEntity
+import numpy as np
 
 BASE_ROOT = Path("data/prov")
 OUT_DIR = Path("data/unified")
-DEBUG = False  # set via --debug
+DEBUG = False
+
+# ----------------------------- Optional deps -----------------------------
+try:
+    import xarray as xr
+    XARRAY_OK = True
+except ImportError:
+    XARRAY_OK = False
+    print("⚠️  Warning: xarray not installed. NetCDF files (.nc) will be skipped.")
+    print("   Install with: pip install xarray netCDF4")
 
 # -------------------------- utils --------------------------
-
 def dbg(msg: str):
     if DEBUG:
         print(msg)
@@ -24,246 +33,357 @@ def qn_to_prefixed(qn) -> str:
     return str(qn)
 
 def normalize_key(prefixed: str) -> str:
+    """
+    Normalize PROV attribute keys while preserving structure.
+    
+    Rules:
+    - yProv4ML:* → keep as-is (e.g., yProv4ML:level)
+    - metric:X → X (strip metric: prefix)
+    - param:X → param_X
+    - context:X → context_X
+    - Plain names (MODEL_SIZE, accuracy, etc.) → keep as-is
+    - Other namespaces → replace : with _
+    """
+    # Already a plain name (no namespace)
+    if ":" not in prefixed:
+        return prefixed
+    
+    # Keep yProv4ML namespace as-is
+    if prefixed.startswith("yProv4ML:"):
+        return prefixed
+    
+    # Strip metric: prefix
     if prefixed.startswith("metric:"):
         return prefixed.split(":", 1)[1]
+    
+    # Convert param: to param_
     if prefixed.startswith("param:"):
         return "param_" + prefixed.split(":", 1)[1]
-    return (
-        prefixed.replace("context:", "context_")
-                .replace("art:", "artifact_")
-                .replace("user:", "user_")
-    )
+    
+    # Convert context: to context_
+    if prefixed.startswith("context:"):
+        return "context_" + prefixed.split(":", 1)[1]
+    
+    # For other namespaces, replace : with _
+    return prefixed.replace(":", "_")
 
-def _looks_like_index(series: pd.Series) -> bool:
-    """Heuristic: monotonically non-decreasing small ints starting at ~0/1; or column named like step/epoch."""
-    if not pd.api.types.is_numeric_dtype(series):
-        return False
-    s = pd.to_numeric(series, errors="coerce").dropna()
-    if s.empty:
-        return False
-    # lots of zeros/ones or small ints?
-    if (s >= 0).all() and (s <= 1e6).all():
-        # monotonic-ish
-        if s.is_monotonic_increasing or s.is_monotonic:
-            return True
-    return False
+def clean_scalar_for_csv(x):
+    """
+    Make sure IDs / version strings can't break CSV structure.
 
-def _is_timestamp_value(x: float) -> bool:
-    # reject obvious UNIX timestamps in seconds (>= 1e9 is already ms-ish), ms, ns (we can't reach those typical values in floats)
-    try:
-        return pd.notna(x) and (float(x) > 1e9)
-    except Exception:
-        return False
+    - Convert to string
+    - Collapse whitespace/newlines
+    - Replace commas with semicolons
+    """
+    if x is None or (isinstance(x, float) and np.isnan(x)):
+        return None
+    s = str(x)
+    # collapse all whitespace (spaces, newlines, tabs) into single spaces
+    s = " ".join(s.split())
+    # avoid introducing extra CSV columns via commas
+    s = s.replace(",", ";")
+    return s
 
-def _is_timestamp_colname(name: str) -> bool:
-    n = str(name).lower()
-    return ("timestamp" in n) or ("time" in n) or ("loggingitemkind.metric" in n) or n in {"ms","ns"}
-
-def _choose_metric_column(df: pd.DataFrame, metric_name: str | None = None) -> str | None:
-    """Choose the true value column, handling 3-col {step, value, timestamp} logs."""
-    cols = list(df.columns)
-
-    # 0) If exactly 3 columns and the RIGHTMOST looks like a timestamp -> pick the MIDDLE
-    if len(cols) == 3:
-        c0, c1, c2 = cols
-        last_vals = pd.to_numeric(df[c2], errors="coerce").dropna()
-        if _is_timestamp_colname(c2) or (not last_vals.empty and _is_timestamp_value(last_vals.iloc[-1])):
-            if pd.api.types.is_numeric_dtype(df[c1]):
-                return c1
-
-    lower = {str(c).lower(): c for c in cols}
-
-    # 1) Canonical value names
-    for name in ("value", "metric_value", "val"):
-        if name in lower and pd.api.types.is_numeric_dtype(df[lower[name]]):
-            return lower[name]
-
-    # 2) Two-column pattern: {index, value}
-    if len(cols) == 2:
-        nums = [c for c in cols if pd.api.types.is_numeric_dtype(df[c])]
-        if len(nums) == 2:
-            a, b = nums
-            if _looks_like_index(df[a]) and not _looks_like_index(df[b]): return b
-            if _looks_like_index(df[b]) and not _looks_like_index(df[a]): return a
-
-    # 3) General fallback: numeric, non-index, non-timestamp column (prefer rightmost)
-    reject_exact = {"step", "iter", "iteration", "epoch", "index"}
-    candidates = []
-    for c in cols:
-        lc = str(c).lower()
-        if lc in reject_exact or _is_timestamp_colname(lc):
-            continue
-        if pd.api.types.is_numeric_dtype(df[c]) and not _looks_like_index(df[c]):
-            candidates.append(c)
-    if candidates:
-        return candidates[-1]
-
-    return None
 
 # ----------------------- metric reading -----------------------
-
 def read_metric_csv(csv_path: Path, metric_name: str | None = None):
-    """
-    Read a metric CSV file and return the last numeric value, robust to shapes like:
-    - {step, value}
-    - {step, value, timestamp}
-    - generic CSV with a 'value'/'val' column
-    """
+    """Read CSV metric file and return last value."""
     try:
         if not csv_path.exists():
-            dbg(f"   ❓ Missing metric CSV: {csv_path}")
+            dbg(f"   ❓ Missing CSV: {csv_path}")
             return None
-
+        
         df = pd.read_csv(csv_path)
         if df.empty:
-            dbg(f"   ⚠️ Empty metric CSV: {csv_path}")
+            dbg(f"   ⚠️ Empty CSV: {csv_path}")
             return None
-
-        # Special-case: common 3-col header from your logs where col0 == metric name (step/index),
-        # col1 == actual numeric value, col2 == timestamp (or 'LoggingItemKind.METRIC')
-        if len(df.columns) == 3:
-            c0, c1, c2 = df.columns
-            last_vals = pd.to_numeric(df[c2], errors="coerce").dropna()
-            if _is_timestamp_colname(c2) or (not last_vals.empty and _is_timestamp_value(last_vals.iloc[-1])):
-                if pd.api.types.is_numeric_dtype(df[c1]):
-                    val_series = pd.to_numeric(df[c1], errors="coerce").dropna()
-                    if not val_series.empty:
-                        val = float(val_series.iloc[-1])
-                        dbg(f"   ✓ {csv_path.name}: 3-col pattern -> using '{c1}' -> last={val}")
-                        # For non-time metrics, guard against accidentally picking timestamps
-                        looks_timey_metric = metric_name and any(s in metric_name.lower() for s in ["time", "ms", "epoch_time"])
-                        if not looks_timey_metric and _is_timestamp_value(val):
-                            dbg(f"   🤨 middle '{c1}' in {csv_path.name} looks like a timestamp ({val}) — ignoring")
-                            return None
-                        return val
-
-        # Otherwise, pick via heuristic chooser
-        col = _choose_metric_column(df, metric_name)
-        if col is None:
-            dbg(f"   ⚠️ No usable value column in {csv_path}. Columns={list(df.columns)}")
-            return None
-
-        values = pd.to_numeric(df[col], errors="coerce").dropna()
-        if values.empty:
-            dbg(f"   ⚠️ Column '{col}' has no numeric values in {csv_path}")
-            return None
-
-        val = float(values.iloc[-1])
-
-        # Final guard: if metric doesn't sound like time but value is huge -> likely timestamp
-        looks_timey_col = _is_timestamp_colname(col)
-        looks_timey_metric = metric_name and any(s in metric_name.lower() for s in ["time", "ms", "epoch_time"])
-        if not looks_timey_col and not looks_timey_metric and _is_timestamp_value(val):
-            dbg(f"   🤨 '{col}' in {csv_path.name} looks like a timestamp ({val}) — ignoring")
-            return None
-
-        dbg(f"   ✓ {csv_path.name}: using '{col}' -> last={val}")
-        return val
-
+        
+        # Get last row, first numeric column
+        for col in df.columns:
+            if pd.api.types.is_numeric_dtype(df[col]):
+                val = float(df[col].iloc[-1])
+                dbg(f"   ✓ {csv_path.name}: {col} = {val:.6g}")
+                return val
+        
+        dbg(f"   ⚠️ No numeric columns in {csv_path}")
+        return None
     except Exception as e:
-        print(f"⚠️  Warning: Could not read metric CSV {csv_path}: {e}")
+        print(f"⚠️  Could not read CSV {csv_path}: {e}")
+        return None
+
+def read_metric_nc(nc_path: Path, metric_name: str | None = None):
+    """Read NetCDF metric file and return last value."""
+    if not XARRAY_OK:
+        dbg(f"   ⚠️ xarray not installed, skipping {nc_path}")
+        return None
+    
+    try:
+        if not nc_path.exists():
+            dbg(f"   ❓ Missing NetCDF: {nc_path}")
+            return None
+        
+        ds = xr.open_dataset(nc_path)
+        data_vars = list(ds.data_vars)
+        
+        if not data_vars:
+            dbg(f"   ⚠️ No data variables in {nc_path}")
+            ds.close()
+            return None
+        
+        # CRITICAL FIX: Prefer 'values' variable if it exists (that's where the actual metric is)
+        # Otherwise fall back to first variable
+        var_name = 'values' if 'values' in data_vars else data_vars[0]
+        
+        values = ds[var_name].values.flatten()
+        ds.close()
+        
+        valid = values[~np.isnan(values)]
+        if len(valid) == 0:
+            dbg(f"   ⚠️ No valid values in {nc_path}")
+            return None
+        
+        val = float(valid[-1])
+        dbg(f"   ✓ {nc_path.name}: {var_name} = {val:.6g}")
+        return val
+    
+    except Exception as e:
+        print(f"⚠️  Could not read NetCDF {nc_path}: {e}")
+        return None
+
+def read_metric_file(file_path: Path, metric_name: str | None = None):
+    """Dispatch to appropriate reader based on file extension."""
+    suffix = file_path.suffix.lower()
+    if suffix == '.csv':
+        return read_metric_csv(file_path, metric_name)
+    elif suffix == '.nc':
+        return read_metric_nc(file_path, metric_name)
+    else:
+        dbg(f"   ⚠️ Unknown file type: {file_path}")
         return None
 
 # -------------------- PROV extraction --------------------
-
 def load_prov_json(path: Path) -> ProvDocument:
     with open(path, "r", encoding="utf-8") as f:
         return ProvDocument.deserialize(content=f.read(), format="json")
 
 def extract_metrics_from_entities(prov_doc: ProvDocument, prov_json_path: Path) -> dict:
-    """
-    Extract metric values by reading the CSV files referenced in metric entities.
-    """
+    """Extract metric values by reading metric files (CSV or NetCDF)."""
     metrics = {}
+    
+    # CRITICAL: Use the JSON file's actual parent directory
+    # e.g., if JSON is at data/prov/usecase/exp_0/prov_file.json
+    # then base_dir is data/prov/usecase/exp_0
     base_dir = prov_json_path.parent
+    dbg(f"   Base directory: {base_dir}")
 
+    metric_count = 0
     for rec in prov_doc.get_records():
         if not isinstance(rec, ProvEntity):
             continue
 
         attrs = dict(rec.attributes)
-        # Check if metric entity
-        is_metric = False
-        for k, v in attrs.items():
-            if qn_to_prefixed(k) == "yProv4ML:source" and "METRIC" in str(v):
-                is_metric = True
-                break
-        if not is_metric:
-            continue
 
-        # Name + path
+        # --- pull out common attributes ---
         metric_name = None
         metric_path = None
+        source_val = None
+        role_val = None
+
         for k, v in attrs.items():
             k_str = qn_to_prefixed(k)
             if k_str == "yProv4ML:label":
                 metric_name = str(v)
             elif k_str == "yProv4ML:path":
                 metric_path = str(v)
+            elif k_str == "yProv4ML:source":
+                source_val = str(v)
+            elif k_str == "yProv4ML:role":
+                role_val = str(v)
 
-        if not metric_name or not metric_path:
+        # Need at least a path
+        if not metric_path:
             continue
 
-        # Make absolute/resolved path
-        csv_path = Path(metric_path)
-        if not csv_path.is_absolute():
-            candidate = base_dir / metric_path
-            csv_path = candidate if candidate.exists() else Path(metric_path)
+        # --- decide if this entity is a metric ---
+        is_metric = False
 
-        value = read_metric_csv(csv_path, metric_name=metric_name)
+        # 1) Based on source field (when present)
+        if source_val and "METRIC" in source_val.upper():
+            is_metric = True
+
+        # 2) Based on path/location: anything under a metrics dir with .nc/.csv
+        lower_path = metric_path.lower()
+        if ("/metrics" in lower_path or "metrics_" in lower_path) and (
+            lower_path.endswith(".nc") or lower_path.endswith(".csv")
+        ):
+            is_metric = True
+
+        # 3) Skip obvious pure inputs unless already tagged as metric
+        if role_val and role_val.lower() == "input":
+            if not is_metric:
+                continue
+
+        if not is_metric:
+            continue
+
+        # Fallback metric name from filename if label missing
+        if not metric_name:
+            metric_name = Path(metric_path).stem
+
+        metric_count += 1
+        dbg(f"   📊 Metric entity: {metric_name} -> {metric_path}")
+
+        # --- FIXED path resolution strategy ---
+        file_path = None
+        candidates = []
+
+        p = Path(metric_path)
+        
+        if p.is_absolute():
+            candidates.append(p)
+        else:
+            # KEY FIX: If path starts with "prov/", it's relative to the experiment folder
+            # Example: JSON at data/prov/usecase/exp_0/prov_file.json
+            #          Metric path: prov/exp_0/metrics_GR0/emissions.nc
+            #          Should resolve to: data/prov/usecase/exp_0/metrics_GR0/emissions.nc
+            if metric_path.startswith("prov/"):
+                # Extract the part after "prov/"
+                rel_part = metric_path[5:]  # Remove "prov/" prefix
+                
+                # Strategy 1: Relative to JSON file's parent (same experiment folder)
+                # If JSON is at .../usecase/exp_0/prov_file.json and metric_path is prov/exp_0/metrics/...
+                # Then base_dir / rel_part gives .../usecase/exp_0/metrics/...
+                candidates.append(base_dir / rel_part)
+                
+                # Strategy 2: Go up one level from JSON parent (for some structures)
+                candidates.append(base_dir.parent / rel_part)
+                
+            # Strategy 3: Path relative to JSON location (as-is)
+            candidates.append(base_dir / metric_path)
+            
+            # Strategy 4: Relative to current working directory
+            candidates.append(Path.cwd() / metric_path)
+            
+            # Strategy 5: Prepend 'data/' and try from CWD
+            candidates.append(Path.cwd() / "data" / metric_path)
+
+        # Find the first path that exists
+        for candidate in candidates:
+            if candidate.exists():
+                file_path = candidate
+                dbg(f"      ✓ Found metric file at: {file_path}")
+                break
+
+        if file_path is None:
+            dbg(f"      ✗ Metric file not found for {metric_name}. Tried:")
+            for c in candidates[:5]:
+                dbg(f"         - {c}")
+            continue
+
+        value = read_metric_file(file_path, metric_name=metric_name)
         if value is not None:
             metrics[metric_name] = value
+            dbg(f"      ✓ Extracted metric {metric_name} = {value}")
+        else:
+            dbg(f"      ✗ Failed to extract value from {file_path}")
 
+    dbg(f"   Total: Found {metric_count} metric entities, extracted {len(metrics)} values")
     return metrics
 
-def prov_activity_to_row(activity: ProvActivity, prov_doc: ProvDocument, prov_json_path: Path):
-    """Extract attributes + artifacts + metric values from CSVs."""
-    attrs = dict(activity.attributes)
-    row = {}
 
+def prov_activity_to_row(activity: ProvActivity, prov_doc: ProvDocument, prov_json_path: Path):
+    """
+    Extract ALL data from PROV document:
+    - Main activity attributes
+    - Sub-activity attributes (Context.TRAINING, Context.TESTING, etc.)
+    - Metric values from NetCDF/CSV files
+    - Artifacts
+    """
+    row = {}
+    
+    # 1. Extract main activity attributes
+    attrs = dict(activity.attributes)
     for k, v in attrs.items():
         k_str = qn_to_prefixed(k)
         row[normalize_key(k_str)] = v
-
-    row["exp"] = row.get("context_experiment_name") or row.get("experiment_name")
-    row["run_id"] = row.get("context_run_id") or row.get("run_id")
-
-    # artifacts
+    
+    # 2. Extract ALL sub-activity attributes (Context.TRAINING, etc.)
+    for rec in prov_doc.get_records():
+        if isinstance(rec, ProvActivity) and rec != activity:
+            sub_attrs = dict(rec.attributes)
+            # Get the context name
+            activity_id = str(rec.identifier)
+            context_name = activity_id.split(":")[-1] if ":" in activity_id else activity_id
+            
+            for k, v in sub_attrs.items():
+                k_str = qn_to_prefixed(k)
+                # Skip yProv4ML:level (internal metadata)
+                if k_str == "yProv4ML:level":
+                    continue
+                
+                # For context-specific attributes, use plain column name
+                col_name = normalize_key(k_str)
+                row[col_name] = v
+    
+    # 3. Extract artifacts
     arts = []
     for rec in prov_doc.get_records():
         if isinstance(rec, ProvEntity):
             ent_attrs = dict(rec.attributes)
             for k2, v2 in ent_attrs.items():
-                if qn_to_prefixed(k2) == "context:artifact_path":
+                if qn_to_prefixed(k2) == "yProv4ML:path" and "artifact" in str(v2).lower():
                     arts.append(str(v2))
                     break
     if arts:
         row["artifacts"] = ";".join(sorted(set(arts)))
-
-    # metrics via CSVs
+    
+    # 4. Extract metric values from NetCDF/CSV files
     metrics = extract_metrics_from_entities(prov_doc, prov_json_path)
     row.update(metrics)
+    
+    # 5. Set experiment identifiers (SANITIZED)
+    exp_raw = (
+        row.get("yProv4ML:experiment_name")
+        or row.get("context_experiment_name")
+        or row.get("experiment_name")
+    )
+    run_raw = (
+        row.get("yProv4ML:run_id")
+        or row.get("context_run_id")
+        or row.get("run_id")
+    )
+
+    exp_clean = clean_scalar_for_csv(exp_raw)
+    run_clean = clean_scalar_for_csv(run_raw)
+
+    if exp_clean is not None:
+        row["exp"] = exp_clean
+
+    if run_clean is not None:
+        # ensure we keep a clean, consistent run_id
+        row["run_id"] = run_clean
+        row["yProv4ML:run_id"] = run_clean
+
+    # 6. Clean python version as well (SANITIZED)
+    if "yProv4ML:python_version" in row:
+        row["yProv4ML:python_version"] = clean_scalar_for_csv(
+            row["yProv4ML:python_version"]
+        )
 
     return row
 
 def iter_all_prov_jsons(base_root: Path):
     base_root = base_root.resolve()
-    if base_root.name == "prov" and base_root.parent.name == "data":
-        patterns = [str(base_root / "*" / "*" / "prov_*.json")]
-    else:
-        patterns = [str(base_root / "*" / "prov_*.json")]
-
+    patterns = [str(base_root / "**" / "prov_*.json")]
     for pat in patterns:
-        for p in glob.iglob(pat, recursive=False):
+        for p in glob.iglob(pat, recursive=True):
             yield Path(p)
 
 def infer_exp_version(base_root: Path, prov_json: Path):
     rel = prov_json.resolve().relative_to(base_root.resolve())
     parts = rel.parts
-    if len(parts) == 2:
-        return base_root.name, parts[0]
-    if len(parts) == 3:
-        return parts[0], parts[1]
+    if len(parts) >= 2:
+        return parts[0], parts[1] if len(parts) > 2 else None
     return None, None
 
 def safe_filename(name: str) -> str:
@@ -274,11 +394,13 @@ def safe_filename(name: str) -> str:
 def build_dataframe(base_root: Path) -> pd.DataFrame | None:
     rows = []
     for prov_json in iter_all_prov_jsons(base_root):
+        dbg(f"\n📄 Processing: {prov_json}")
         exp_name, exp_version = infer_exp_version(base_root, prov_json)
 
         d = load_prov_json(prov_json)
         activities = [r for r in d.get_records() if isinstance(r, ProvActivity)]
         if not activities:
+            dbg(f"   ⚠️ No activities found")
             continue
 
         a = activities[0]
@@ -295,55 +417,69 @@ def build_dataframe(base_root: Path) -> pd.DataFrame | None:
     if not rows:
         return None
 
+    # Create DataFrame - pandas will handle columns dynamically
     df = pd.DataFrame(rows)
-
-    # keep a minimal expected skeleton; metrics will be added dynamically
-    expected = [
-        "exp","ACC_val","MSE_train","MSE_val","cpu_energy","cpu_power","cpu_usage",
-        "disk_usage","emissions","emissions_rate","energy_consumed","gpu_energy","gpu_power",
-        "memory_usage","param_batch_size","param_epochs","param_lr","param_seed","ram_energy",
-        "ram_power","train_epoch_time_ms","epochs","lr_min","lr_max","artifacts","run_id",
-        "exp_folder","exp_version",    "emissions", "emissions_rate", "energy_consumed",
-    "cpu_energy", "gpu_energy", "ram_energy",
-    "cpu_power", "gpu_power", "ram_power",
-    ]
-    for c in expected:
-        if c not in df.columns:
-            df[c] = pd.NA
-
-    other_cols = [c for c in df.columns if c not in expected]
-    df = df[expected + other_cols]
+    
+    # Optional: organize column order (move common columns to front, keep rest as-is)
+    priority_cols = ["exp", "run_id", "exp_folder", "exp_version"]
+    existing_priority = [c for c in priority_cols if c in df.columns]
+    other_cols = [c for c in df.columns if c not in priority_cols]
+    
+    if existing_priority:
+        df = df[existing_priority + other_cols]
+    
     return df
 
 def write_split_by_exp(df: pd.DataFrame, out_dir: Path):
+    """
+    Write CSV files per experiment, with each file containing ONLY the columns
+    that have data for that specific experiment.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     key = "exp" if "exp" in df.columns else "exp_folder"
     file_count = 0
 
+    print(f"\n📊 Processing {len(df)} total runs across experiments...")
+    print()
+
     for exp_value, g in df.groupby(key, dropna=False, sort=True):
         stem = safe_filename(exp_value if pd.notna(exp_value) else "unknown")
         out_path = out_dir / f"{stem}.csv"
-        g.to_csv(out_path, index=False)
+        
+        # Drop columns that are completely empty for this experiment
+        non_empty_cols = [c for c in g.columns if g[c].notna().any()]
+        g_clean = g[non_empty_cols].copy()
+        
+        # Write CSV
+        g_clean.to_csv(out_path, index=False)
         file_count += 1
-        print(f"✅ Wrote {out_path} with {len(g)} runs and {len(g.columns)} columns")
+        
+        # Show summary
+        print(f"✅ {out_path.name}")
+        print(f"   Runs: {len(g_clean)}")
+        print(f"   Columns: {len(g_clean.columns)} (removed {len(g.columns) - len(g_clean.columns)} empty columns)")
+        
+        # Show column breakdown
+        yprov_cols = [c for c in g_clean.columns if str(c).startswith("yProv4ML:")]
+        param_cols = [c for c in g_clean.columns if str(c).startswith("param_")]
+        metric_cols = [c for c in g_clean.columns if c not in yprov_cols + param_cols 
+                       and c not in ["exp", "run_id", "exp_folder", "exp_version", "source_file", "artifacts"]
+                       and not str(c).startswith("context_")]
+        
+        if yprov_cols:
+            print(f"   • yProv4ML: {len(yprov_cols)} attributes")
+        if param_cols:
+            print(f"   • Parameters: {len(param_cols)} ({', '.join(param_cols)})")
+        if metric_cols:
+            print(f"   • Metrics: {len(metric_cols)} ({', '.join(sorted(metric_cols))})")
+        print()
 
-        # Show which common metrics were populated
-        metric_cols = [c for c in g.columns if c in [
-            "ACC_val", "MSE_train", "MSE_val", "train_epoch_time_ms",
-            "train_loss", "val_loss", "val_accuracy", "learning_rate",
-            "cpu_usage", "memory_usage", "disk_usage", "lr_min", "lr_max"
-        ]]
-        non_empty = [c for c in metric_cols if g[c].notna().any()]
-        if non_empty:
-            print(f"   Metrics with values: {', '.join(non_empty)}")
-        else:
-            print(f"   ⚠️  No metric values found (check CSV files exist)")
-
-    print(f"\n✅ Created {file_count} per-experiment CSV file(s) in {out_dir}")
+    print(f"✅ Created {file_count} CSV file(s) in {out_dir}")
+    print(f"   Each CSV contains only the columns with data for that experiment")
 
 def main(base_root: Path, out_dir: Path):
-    print(f"Processing PROV files from: {base_root}")
-    print(f"Output directory: {out_dir}")
+    print(f"📂 Processing PROV files from: {base_root}")
+    print(f"📤 Output directory: {out_dir}")
     print()
 
     df = build_dataframe(base_root)
@@ -351,16 +487,14 @@ def main(base_root: Path, out_dir: Path):
         print(f"❌ No runs/activities found in PROV JSON files under {base_root}.")
         return
 
-    print(f"Found {len(df)} runs total")
+    print(f"✅ Found {len(df)} runs total")
     write_split_by_exp(df, out_dir)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Aggregate PROV JSONs into per-experiment CSVs.")
-    parser.add_argument("--root", type=Path, default=BASE_ROOT,
-                        help="Base root containing experiment folders (default: data/prov)")
-    parser.add_argument("--out-dir", type=Path, default=OUT_DIR,
-                        help="Directory to write per-experiment CSVs (default: data/unified)")
-    parser.add_argument("--debug", action="store_true", help="Verbose metric-column selection logs")
+    parser.add_argument("--root", type=Path, default=BASE_ROOT)
+    parser.add_argument("--out-dir", type=Path, default=OUT_DIR)
+    parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
     DEBUG = args.debug
     main(args.root, args.out_dir)

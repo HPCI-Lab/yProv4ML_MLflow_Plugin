@@ -62,7 +62,93 @@ def numeric_cols(df: pd.DataFrame) -> List[str]:
     return [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
 
 def param_cols(df: pd.DataFrame) -> List[str]:
-    return [c for c in df.columns if c.startswith("param_")]
+    """
+    Heuristic detection of hyperparameter columns.
+
+    Priority 1: any column whose name starts with 'param_' (original behavior).
+    Priority 2: infer params via:
+        - name-based *substring* hints (e.g. 'lr', 'dropout', 'batch')
+        - cardinality (few distinct values, not almost-unique IDs)
+    """
+    # 1) Explicit param_* columns win
+    explicit = [c for c in df.columns if str(c).lower().startswith("param_")]
+    if explicit:
+        return explicit
+
+    n_rows = len(df)
+    if n_rows == 0:
+        return []
+
+    # ---- NEGATIVE filters (things we definitely do NOT want) ----
+    id_exact = {"id", "run_id", "run", "exp", "experiment"}
+    id_suffixes = ["_id"]
+
+    metric_keywords = [
+        "acc", "accuracy", "loss", "emission", "co2", "energy",
+        "time", "latency", "cost", "power", "score", "metric"
+    ]
+    path_keywords = ["path", "file", "dir", "uri", "artifact", "json", "requirements"]
+    dataset_keywords = ["dataset", "usecase"]
+
+    # ---- POSITIVE hints (substring-based) for hyperparameters ----
+    # if column name *includes* one of these, treat it as a param candidate
+    param_hints = [
+        "lr", "learning_rate",
+        "batch", "bs",
+        "epoch",
+        "dropout",
+        "width", "depth", "hidden",
+        "layer", "layers",
+        "heads", "nhead",
+        "weight_decay", "wd",
+        "momentum",
+        "alpha", "beta", "gamma", "lambda"
+    ]
+
+    candidates: List[str] = []
+
+    for c in df.columns:
+        name = str(c).strip().lower()
+
+        # --- skip obvious IDs ---
+        if name in id_exact or any(name.endswith(suf) for suf in id_suffixes):
+            continue
+
+        # --- skip metric-like columns ---
+        if any(k in name for k in metric_keywords):
+            continue
+
+        # --- skip file/path-like columns ---
+        if any(k in name for k in path_keywords):
+            continue
+
+        # --- skip dataset/usecase meta-columns ---
+        if any(k in name for k in dataset_keywords):
+            continue
+
+        col = df[c]
+        nunique = col.nunique(dropna=True)
+
+        # skip constants
+        if nunique <= 1:
+            continue
+
+        # decide if it's param-like by name
+        is_param_by_name = any(h in name for h in param_hints)
+
+        # cardinality heuristic: params usually have limited choices
+        if n_rows > 1:
+            max_allowed = max(20, int(0.5 * n_rows))  # tweakable
+        else:
+            max_allowed = nunique
+
+        is_param_by_cardinality = (nunique <= max_allowed)
+
+        if is_param_by_name or is_param_by_cardinality:
+            candidates.append(c)
+
+    return candidates
+
 
 def ensure_unique_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -84,23 +170,22 @@ def clean_rows(df: pd.DataFrame) -> pd.DataFrame:
     except Exception:
         pass
 
-    # 3) Strip whitespace from string cells
+    # Strip whitespace from string cells
     df = df.apply(lambda s: s.str.strip() if s.dtype == "object" else s)
 
-    # 4) Drop exact duplicate rows
+    # Drop exact *fully* duplicate rows only
     df = df.drop_duplicates()
 
-    # 5) Prefer uniqueness by run identifier *only if it makes sense*
-    if "run_id" in df.columns:
-        col = df["run_id"]
-        # non-null count and unique non-null count
-        non_null = col.notna().sum()
-        nunique = col.nunique(dropna=True)
-        # Only dedup if there ARE non-null values AND actually repeated IDs
-        if non_null > 0 and nunique < non_null:
-            df = df.drop_duplicates(subset=["run_id"], keep="last")
+    # 🔴 DO NOT deduplicate by run_id for unified CSVs
+    # if "run_id" in df.columns:
+    #     col = df["run_id"]
+    #     non_null = col.notna().sum()
+    #     nunique = col.nunique(dropna=True)
+    #     if non_null > 0 and nunique < non_null:
+    #         df = df.drop_duplicates(subset=["run_id"], keep="last")
 
     return df.reset_index(drop=True)
+
 
 
 
@@ -422,7 +507,7 @@ cost_col = st.sidebar.selectbox(
 
 st.sidebar.subheader("Clustering")
 clustering_mode = st.sidebar.radio("Cluster on:", ["Full dataset", "Pareto-only"])
-n_clusters = st.sidebar.slider("KMeans: number of clusters", 2, 8, 3)
+n_clusters = st.sidebar.slider("Number of clusters", 2, 8, 3)
 annotate = st.sidebar.checkbox("Label points on plots", value=True)
 st.sidebar.subheader("Cluster explanations (SHAP)")
 surrogate_model = st.sidebar.selectbox(
@@ -647,45 +732,53 @@ else:
                     else:
                         importances = None
 
-                # 6) Plot global importance (or show message)
+                # 6) Plot global importance 
                 if importances is None:
                     st.info("Surrogate model provides no importances; cannot explain clusters.")
                 else:
-                    # Normalize names length to #features
-                    n_feats = int(len(importances))
-                    if not isinstance(f_names, list) or len(f_names) != n_feats:
-                        f_names_list = [f"f{i}" for i in range(n_feats)]
-                    else:
+                    # Flatten importances
+                    importances = np.asarray(importances).ravel()
+                    n_imps = importances.shape[0]
+
+                    # Build feature-name list with safe length alignment
+                    if isinstance(f_names, list) and len(f_names) > 0:
                         f_names_list = list(f_names)
+                    else:
+                        f_names_list = [f"f{i}" for i in range(n_imps)]
 
-                    order = np.argsort(importances)[::-1].ravel().tolist()
-                    names_sorted = [f_names_list[int(i)] for i in order]
-                    imps_sorted = np.asarray(importances)[order].ravel()
+                    # Ensure same length for names and importances
+                    if len(f_names_list) != n_imps:
+                        n = min(len(f_names_list), n_imps)
+                        importances = importances[:n]
+                        f_names_list = f_names_list[:n]
+                        n_imps = n
 
-                    # Dynamic slider bounded to available features
-                    k = st.slider(
-                        "Top features to show",
-                        min_value=1,
-                        max_value=int(n_feats),
-                        value=min(12, int(n_feats)),
-                        key="shap_topk_dynamic"
-                    )
-                    names_k = names_sorted[:k]
-                    imps_k = imps_sorted[:k].tolist()
+                    # If after all that we still have nothing, bail out
+                    if n_imps == 0:
+                        st.info("No features to display for importance.")
+                    else:
+                        # Sort features by importance (descending)
+                        order = np.argsort(importances)[::-1]
+                        names_sorted = [f_names_list[int(i)] for i in order]
+                        imps_sorted = importances[order]
 
-                    title_note = " (model-native importances)" if fallback_used else " (mean |SHAP|)"
-                    st.markdown(f"**Global feature importance** · Surrogate: _{surrogate_model}_{title_note}")
-                    try:
-                        fig_bar = px.bar(
-                            x=imps_k[::-1],
-                            y=names_k[::-1],
-                            orientation="h",
-                            title=f"Top {k} features",
-                            labels={"x": "importance", "y": "feature"}
-                        )
-                        st.plotly_chart(fig_bar, use_container_width=True)
-                    except Exception:
-                        st.write(pd.DataFrame({"feature": names_k, "importance": imps_k}))
+                        title_note = " (model-native importances)" if fallback_used else " (mean |SHAP|)"
+                        st.markdown(f"**Global feature importance** · Surrogate: _{surrogate_model}_{title_note}")
+
+                        # Plot ALL features, sorted
+                        try:
+                            fig_bar = px.bar(
+                                x=imps_sorted[::-1],   # smallest → largest
+                                y=names_sorted[::-1],  # smallest → largest
+                                orientation="h",
+                                title="Feature importance",
+                                labels={"x": "importance", "y": "feature"}
+                            )
+                            st.plotly_chart(fig_bar, use_container_width=True)
+                        except Exception:
+                            st.write(pd.DataFrame({"feature": names_sorted, "importance": imps_sorted}))
+
+
 
 
 
