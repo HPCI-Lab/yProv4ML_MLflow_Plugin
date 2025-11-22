@@ -27,20 +27,18 @@ from plotly.subplots import make_subplots
 
 # ----------------------------- Optional deps -----------------------------
 
-try:
-    import shap
-    from sklearn.preprocessing import OneHotEncoder, StandardScaler
-    from sklearn.compose import ColumnTransformer
-    from sklearn.pipeline import Pipeline
-    from sklearn.linear_model import LogisticRegression, Ridge
-    from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor, GradientBoostingRegressor
-    from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering, SpectralClustering
-    from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
-    SHAP_OK = True
-    SKLEARN_OK = True
-except Exception:
-    SHAP_OK = False
-    SKLEARN_OK = False
+import shap
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.linear_model import LogisticRegression, Ridge
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor, GradientBoostingRegressor
+from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering, SpectralClustering
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
+
+SHAP_OK = True
+SKLEARN_OK = True
+
 
 # ----------------------------- Cache loaders -----------------------------
 
