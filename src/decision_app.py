@@ -1,14 +1,12 @@
-# decision_app_enhanced_v2.py
+# decision_app_enhanced_v2.py - UPDATED with tCO2eq units
 # Enhanced Streamlit Decision-Support Dashboard for yProv4ML experiments
 #
-# NEW in v2:
-# - Fixed overlapping axis labels in pairwise analysis
-# - SHAP importance analysis for clustering
-# - Surrogate model selection for SHAP
-# - Better layout and spacing
+# NEW in this version:
+# - Emission metrics display with "tCO2eq" unit (tonnes of CO2 equivalent)
+# - Proper unit formatting for all sustainability metrics
 #
 # Run:
-#   streamlit run decision_app_enhanced_v2.py
+#   streamlit run decision_app_updated.py
 #
 # Requires: streamlit, pandas, numpy, plotly, scikit-learn, shap
 
@@ -45,6 +43,76 @@ SKLEARN_OK = True
 @st.cache_data(show_spinner=False)
 def load_csv_from_bytes(buf: bytes) -> pd.DataFrame:
     return pd.read_csv(io.BytesIO(buf))
+
+# ----------------------------- NEW: Unit Formatting Function -----------------------------
+
+def format_metric_with_unit(metric_name: str) -> str:
+    """
+    Add appropriate units to metric names for display.
+    
+    Examples:
+    - emissions -> emissions (tCO2eq)
+    - energy_consumed -> energy_consumed (kWh)
+    - train_epoch_time_ms -> train_epoch_time_ms (ms)
+    """
+    name_lower = metric_name.lower()
+    
+    # Emission metrics -> tCO2eq
+    if any(k in name_lower for k in ["emission", "co2"]):
+        return f"{metric_name} (tCO2eq)"
+    
+    # Energy metrics
+    if "energy" in name_lower:
+        if "_j" in name_lower or name_lower.endswith("_j"):
+            return f"{metric_name} (J)"
+        elif "_kwh" in name_lower or "kwh" in name_lower:
+            return f"{metric_name} (kWh)"
+        else:
+            return f"{metric_name} (kWh)"
+    
+    # Time metrics
+    if "time" in name_lower:
+        if "ms" in name_lower:
+            return f"{metric_name} (ms)"
+        elif "sec" in name_lower or name_lower.endswith("_s"):
+            return f"{metric_name} (s)"
+        else:
+            return metric_name
+    
+    # Power metrics
+    if "power" in name_lower:
+        if "_w" in name_lower or name_lower.endswith("_w"):
+            return f"{metric_name} (W)"
+        else:
+            return f"{metric_name} (W)"
+    
+    # Default: no unit
+    return metric_name
+
+def get_metric_unit(metric_name: str) -> str:
+    """
+    Get just the unit for a metric (for axis labels).
+    """
+    name_lower = metric_name.lower()
+    
+    if any(k in name_lower for k in ["emission", "co2"]):
+        return "tCO2eq"
+    if "energy" in name_lower:
+        if "_j" in name_lower:
+            return "J"
+        return "kWh"
+    if "time" in name_lower:
+        if "ms" in name_lower:
+            return "ms"
+        return "s"
+    if "power" in name_lower:
+        return "W"
+    if any(k in name_lower for k in ["acc", "accuracy"]):
+        return ""
+    if "loss" in name_lower:
+        return ""
+    
+    return ""
 
 # ----------------------------- Helpers -----------------------------
 
@@ -147,9 +215,9 @@ def create_correlation_heatmap(df: pd.DataFrame, pcols: List[str], acc_col: str,
 
     corr = df[cols].corr(method="pearson")
 
-    # Labels as strings
-    x_labels = list(corr.columns)
-    y_labels = list(corr.index)
+    # Format labels with units
+    x_labels = [format_metric_with_unit(c) if c in [acc_col, cost_col] else str(c) for c in corr.columns]
+    y_labels = [format_metric_with_unit(c) if c in [acc_col, cost_col] else str(c) for c in corr.index]
 
     # Round for display text
     text_vals = np.round(corr.values, 2)
@@ -330,7 +398,12 @@ def make_tooltip_text(row: pd.Series, id_col: Optional[str], param_columns: List
     a = _scalar_from_row(row, acc_col); c = _scalar_from_row(row, cost_col)
     a_txt = f"{a:.4g}" if (a is not None and pd.notnull(a) and np.isfinite(float(a))) else str(a)
     c_txt = f"{c:.4g}" if (c is not None and pd.notnull(c) and np.isfinite(float(c))) else str(c)
-    return f"id={rid}<br>{acc_col}={a_txt}<br>{cost_col}={c_txt}<br>{params}"
+    
+    # Add units to tooltip
+    acc_label = format_metric_with_unit(acc_col)
+    cost_label = format_metric_with_unit(cost_col)
+    
+    return f"id={rid}<br>{acc_label}={a_txt}<br>{cost_label}={c_txt}<br>{params}"
 
 # ----------------------------- NEW: Advanced Visualization Functions -----------------------------
 
@@ -370,6 +443,9 @@ def create_pairwise_analysis(df: pd.DataFrame, pcols: List[str], acc_col: str, c
         horizontal_spacing=0.12  # Increased spacing
     )
     
+    # Format acc_col for colorbar
+    acc_label = format_metric_with_unit(acc_col)
+    
     for idx, (x_param, y_param) in enumerate(pairs):
         row_idx = idx // cols + 1
         col_idx = idx % cols + 1
@@ -392,7 +468,7 @@ def create_pairwise_analysis(df: pd.DataFrame, pcols: List[str], acc_col: str, c
             y_vals = df[y_param]
         
         hover_text = df.apply(
-            lambda r: f"{x_param}={r[x_param]}<br>{y_param}={r[y_param]}<br>{acc_col}={r[acc_col]:.4f}",
+            lambda r: f"{x_param}={r[x_param]}<br>{y_param}={r[y_param]}<br>{acc_label}={r[acc_col]:.4f}",
             axis=1
         )
         
@@ -406,7 +482,7 @@ def create_pairwise_analysis(df: pd.DataFrame, pcols: List[str], acc_col: str, c
                     colorscale='RdYlGn',
                     size=8,
                     showscale=(idx == 0),
-                    colorbar=dict(title=acc_col, x=1.02) if idx == 0 else None,
+                    colorbar=dict(title=acc_label, x=1.02) if idx == 0 else None,
                     line=dict(width=0.5, color='black')
                 ),
                 text=hover_text,
@@ -470,7 +546,8 @@ def create_heatmap(
     if pivot.empty:
         return None
 
-    # Build hover text
+    # Build hover text with units
+    acc_label = format_metric_with_unit(acc_col)
     hover_text = []
     for i, y_val in enumerate(pivot.index):
         row_text = []
@@ -479,7 +556,7 @@ def create_heatmap(
             row_text.append(
                 f"{x_param}: {x_val:.4g}<br>"
                 f"{y_param}: {y_val:.4g}<br>"
-                f"{acc_col}: {val:.4f}"
+                f"{acc_label}: {val:.4f}"
             )
         hover_text.append(row_text)
 
@@ -500,7 +577,7 @@ def create_heatmap(
             hoverinfo="text",
             showscale=True,
             colorbar=dict(
-                title=acc_col,
+                title=acc_label,
                 len=0.8,
             ),
             xgap=2,
@@ -529,7 +606,7 @@ def create_heatmap(
     )
 
     fig.update_layout(
-        title_text=f"{acc_col} Heatmap: {y_param} vs {x_param}",
+        title_text=f"{acc_label} Heatmap: {y_param} vs {x_param}",
         height=500,
         margin=dict(t=80, b=80, l=80, r=80),
         showlegend=False,
@@ -562,6 +639,9 @@ def create_main_effects(df: pd.DataFrame, pcols: List[str], acc_col: str):
     y_range = y_max - y_min
     y_axis_min = max(0, y_min - 0.1 * y_range)
     y_axis_max = y_max + 0.2 * y_range
+    
+    # Format acc_col for y-axis
+    acc_label = format_metric_with_unit(acc_col)
     
     for idx, param in enumerate(top_params, 1):
         if pd.api.types.is_numeric_dtype(df[param]):
@@ -611,7 +691,7 @@ def create_main_effects(df: pd.DataFrame, pcols: List[str], acc_col: str):
         )
         
         fig.update_yaxes(
-            title_text=acc_col if idx == 1 else "",
+            title_text=acc_label if idx == 1 else "",
             row=1, col=idx,
             range=[y_axis_min, y_axis_max]
         )
@@ -656,7 +736,11 @@ def generate_smart_recommendations(df: pd.DataFrame, front: pd.DataFrame,
     top_n = min(5, len(df))
     top_df = df.nlargest(top_n, acc_col)
     
-    # Strategy 1: EXPLOIT - Refine around best
+    # Format metric labels with units
+    acc_label = format_metric_with_unit(acc_col)
+    cost_label = format_metric_with_unit(cost_col)
+    
+    # Strategy 1: EXPLOIT - Refine around best (ALWAYS add this first)
     rec1 = {
         'strategy': '🎯 EXPLOIT',
         'rationale': 'Refine around best known configuration',
@@ -674,12 +758,91 @@ def generate_smart_recommendations(df: pd.DataFrame, front: pd.DataFrame,
                 rec1['config'][p] = str(val)
     
     if rec1['config']:
-        rec1['expected_performance'] = f"{acc_col} ≈ {best_config[acc_col]:.4f} ± 0.01"
+        rec1['expected_performance'] = f"{acc_label} ≈ {best_config[acc_col]:.4f} ± 0.01"
         if cost_col in best_config.index and pd.notnull(best_config[cost_col]):
-            rec1['expected_cost'] = f"{cost_col} ≈ {best_config[cost_col]:.4f}"
+            rec1['expected_cost'] = f"{cost_label} ≈ {best_config[cost_col]:.4f}"
         recommendations.append(rec1)
     
-    # Strategy 2: EXPLORE - Underexplored regions
+    # Strategy 3: BALANCE - Add this BEFORE explore to ensure it gets included
+    if cost_col in df.columns and len(df) > 5:
+        df_sorted = df.sort_values([acc_col, cost_col], ascending=[False, True])
+        efficient_idx = min(2, len(df_sorted) - 1)
+        efficient = df_sorted.iloc[efficient_idx]
+        
+        # Only add if meaningfully different from best
+        if efficient.name != best_idx:
+            rec = {
+                'strategy': '⚖️ BALANCE',
+                'rationale': 'Optimize accuracy/sustainability trade-off',
+                'priority': 'MEDIUM',
+                'config': {},
+                'details': 'Good performance with lower environmental impact'
+            }
+            
+            for p in pcols:
+                if p in efficient.index and pd.notnull(efficient[p]):
+                    val = efficient[p]
+                    if pd.api.types.is_numeric_dtype(df[p]):
+                        rec['config'][p] = f"{float(val):.6g}"
+                    else:
+                        rec['config'][p] = str(val)
+            
+            if rec['config']:
+                rec['expected_performance'] = f"{acc_label} ≈ {efficient[acc_col]:.4f}"
+                if pd.notnull(efficient[cost_col]):
+                    rec['expected_cost'] = f"{cost_label} ≈ {efficient[cost_col]:.4f}"
+                    # Calculate efficiency ratio
+                    efficiency = efficient[acc_col] / (efficient[cost_col] + 1e-6)
+                    rec['details'] = f"Efficiency ratio: {efficiency:.2f} (higher is better)"
+                recommendations.append(rec)
+    
+    # Strategy 4: INTERPOLATE - Add ONE interpolation recommendation
+    numeric_params = [p for p in pcols if pd.api.types.is_numeric_dtype(df[p]) 
+                     and df[p].nunique() >= 2]
+    
+    for p in numeric_params:
+        if len(recommendations) >= n_recs:
+            break
+        
+        vals = sorted(df[p].dropna().unique())
+        if len(vals) >= 2:
+            # Find largest gap
+            gaps = [(vals[i+1], vals[i], vals[i+1] - vals[i]) for i in range(len(vals)-1)]
+            largest_gap = max(gaps, key=lambda x: x[2])
+            
+            # Only suggest if gap is significant
+            if largest_gap[2] > (vals[-1] - vals[0]) / (len(vals) * 2):
+                midpoint = (largest_gap[0] + largest_gap[1]) / 2
+                
+                rec = {
+                    'strategy': '🔗 INTERPOLATE',
+                    'rationale': f'Fill gap in {p} values',
+                    'priority': 'LOW',
+                    'config': {},
+                    'details': f'Test intermediate value between {largest_gap[1]:.4g} and {largest_gap[0]:.4g}'
+                }
+                
+                rec['config'][p] = f"{midpoint:.6g}"
+                
+                # Fill other params from best config
+                for other_p in pcols:
+                    if other_p != p and other_p in best_config.index and pd.notnull(best_config[other_p]):
+                        val = best_config[other_p]
+                        if pd.api.types.is_numeric_dtype(df[other_p]):
+                            rec['config'][other_p] = f"{float(val):.6g}"
+                        else:
+                            rec['config'][other_p] = str(val)
+                
+                # Estimate performance
+                nearby = df[df[p].between(largest_gap[1], largest_gap[0])]
+                if len(nearby) > 0:
+                    nearby_perf = nearby[acc_col].mean()
+                    rec['expected_performance'] = f"{acc_label} ≈ {nearby_perf:.4f} (interpolated)"
+                
+                recommendations.append(rec)
+                break  # Only add ONE interpolation recommendation
+    
+    # Strategy 2: EXPLORE - Fill remaining slots with exploration
     for p in pcols:
         if len(recommendations) >= n_recs:
             break
@@ -715,7 +878,7 @@ def generate_smart_recommendations(df: pd.DataFrame, front: pd.DataFrame,
                             else:
                                 rec['config'][other_p] = str(val)
                     
-                    rec['expected_performance'] = f"{acc_col}: 0.60 - 0.75 (uncertain)"
+                    rec['expected_performance'] = f"{acc_label}: 0.60 - 0.75 (uncertain)"
                     recommendations.append(rec)
         else:
             # For categorical: find underrepresented categories
@@ -745,86 +908,7 @@ def generate_smart_recommendations(df: pd.DataFrame, front: pd.DataFrame,
                             else:
                                 rec['config'][other_p] = str(val)
                     
-                    rec['expected_performance'] = f"{acc_col}: uncertain"
-                    recommendations.append(rec)
-    
-    # Strategy 3: BALANCE - Accuracy vs Cost trade-off
-    if cost_col in df.columns and len(df) > 5 and len(recommendations) < n_recs:
-        df_sorted = df.sort_values([acc_col, cost_col], ascending=[False, True])
-        efficient_idx = min(2, len(df_sorted) - 1)
-        efficient = df_sorted.iloc[efficient_idx]
-        
-        # Only add if meaningfully different from best
-        if efficient.name != best_idx:
-            rec = {
-                'strategy': '⚖️ BALANCE',
-                'rationale': 'Optimize accuracy/sustainability trade-off',
-                'priority': 'MEDIUM',
-                'config': {},
-                'details': 'Good performance with lower environmental impact'
-            }
-            
-            for p in pcols:
-                if p in efficient.index and pd.notnull(efficient[p]):
-                    val = efficient[p]
-                    if pd.api.types.is_numeric_dtype(df[p]):
-                        rec['config'][p] = f"{float(val):.6g}"
-                    else:
-                        rec['config'][p] = str(val)
-            
-            if rec['config']:
-                rec['expected_performance'] = f"{acc_col} ≈ {efficient[acc_col]:.4f}"
-                if pd.notnull(efficient[cost_col]):
-                    rec['expected_cost'] = f"{cost_col} ≈ {efficient[cost_col]:.4f}"
-                    # Calculate efficiency ratio
-                    efficiency = efficient[acc_col] / (efficient[cost_col] + 1e-6)
-                    rec['details'] = f"Efficiency ratio: {efficiency:.2f} (higher is better)"
-                recommendations.append(rec)
-    
-    # Strategy 4: INTERPOLATE - Fill gaps
-    if len(recommendations) < n_recs:
-        numeric_params = [p for p in pcols if pd.api.types.is_numeric_dtype(df[p]) 
-                         and df[p].nunique() >= 2]
-        
-        for p in numeric_params:
-            if len(recommendations) >= n_recs:
-                break
-            
-            vals = sorted(df[p].dropna().unique())
-            if len(vals) >= 2:
-                # Find largest gap
-                gaps = [(vals[i+1], vals[i], vals[i+1] - vals[i]) for i in range(len(vals)-1)]
-                largest_gap = max(gaps, key=lambda x: x[2])
-                
-                # Only suggest if gap is significant
-                if largest_gap[2] > (vals[-1] - vals[0]) / (len(vals) * 2):
-                    midpoint = (largest_gap[0] + largest_gap[1]) / 2
-                    
-                    rec = {
-                        'strategy': '🔗 INTERPOLATE',
-                        'rationale': f'Fill gap in {p} values',
-                        'priority': 'LOW',
-                        'config': {},
-                        'details': f'Test intermediate value between {largest_gap[1]:.4g} and {largest_gap[0]:.4g}'
-                    }
-                    
-                    rec['config'][p] = f"{midpoint:.6g}"
-                    
-                    # Fill other params from best config
-                    for other_p in pcols:
-                        if other_p != p and other_p in best_config.index and pd.notnull(best_config[other_p]):
-                            val = best_config[other_p]
-                            if pd.api.types.is_numeric_dtype(df[other_p]):
-                                rec['config'][other_p] = f"{float(val):.6g}"
-                            else:
-                                rec['config'][other_p] = str(val)
-                    
-                    # Estimate performance
-                    nearby = df[df[p].between(largest_gap[1], largest_gap[0])]
-                    if len(nearby) > 0:
-                        nearby_perf = nearby[acc_col].mean()
-                        rec['expected_performance'] = f"{acc_col} ≈ {nearby_perf:.4f} (interpolated)"
-                    
+                    rec['expected_performance'] = f"{acc_label}: uncertain"
                     recommendations.append(rec)
     
     return recommendations[:n_recs]
@@ -1074,22 +1158,20 @@ def summarize_clusters(df: pd.DataFrame, cluster_col: str, metrics: List[str]) -
 
 # ----------------------------- UI Setup -----------------------------
 
-st.set_page_config(page_title="yProv4ML Decision Support v2", layout="wide")
+st.set_page_config(page_title="yProv4ML Decision Support", layout="wide")
 
 # Add logo and title
 col_logo, col_title = st.columns([1, 5])
 with col_logo:
     try:
         # Try to load logo from multiple possible locations
-        # Use raw strings (r"") or forward slashes for Windows paths
         logo_paths = [
-            r"C:\Users\admin\Pictures\Screenshots\yprov4ml.png",  # Windows path (raw string)
-            "C:/Users/admin/Pictures/Screenshots/yprov4ml.png",  # Windows path (forward slashes)
+            r"C:\Users\admin\Pictures\Screenshots\yprov4ml.png",
+            "C:/Users/admin/Pictures/Screenshots/yprov4ml.png",
             "/mnt/user-data/uploads/Screenshot_2025-11-03_194540.png",
-            "/home/claude/yprov4ml_logo.png",
             "/mnt/user-data/outputs/yprov4ml_logo.png",
-            "./yprov4ml_logo.png",  # Current directory
-            "./yprov4ml.png",  # Alternative name
+            "./yprov4ml_logo.png",
+            "./yprov4ml.png",
         ]
         logo_loaded = False
         for logo_path in logo_paths:
@@ -1105,7 +1187,7 @@ with col_logo:
         st.markdown("### 🧬")
 
 with col_title:
-    st.title("yProv4ML • Enhanced Decision-Support Dashboard v2")
+    st.title("yProv4ML • Enhanced Decision-Support Dashboard")
     st.write("Upload a CSV to analyze **multi-dimensional solution space** with intelligent recommendations and SHAP analysis.")
 
 st.markdown("---")
@@ -1158,14 +1240,23 @@ cost_options = list(dict.fromkeys(cost_cands + neutral))
 # ----------------------------- Sidebar: Metric Selection -----------------------------
 
 st.sidebar.header("📊 2) Select Metrics")
-acc_col = st.sidebar.selectbox(
+
+# Display options with units in the dropdown
+acc_options_display = [format_metric_with_unit(c) for c in acc_options or ncols_no_id]
+cost_options_display = [format_metric_with_unit(c) for c in cost_options or ncols_no_id]
+
+acc_col_display = st.sidebar.selectbox(
     "Performance metric (maximize)",
-    options=(acc_options or ncols_no_id), index=0
+    options=acc_options_display, index=0
 )
-cost_col = st.sidebar.selectbox(
+cost_col_display = st.sidebar.selectbox(
     "Cost/Sustainability metric (minimize)",
-    options=(cost_options or ncols_no_id), index=0
+    options=cost_options_display, index=0
 )
+
+# Extract the actual column names (without units)
+acc_col = (acc_options or ncols_no_id)[acc_options_display.index(acc_col_display)]
+cost_col = (cost_options or ncols_no_id)[cost_options_display.index(cost_col_display)]
 
 # ----------------------------- Filter Data -----------------------------
 
@@ -1176,7 +1267,7 @@ if len(work) < 2:
 
 # ----------------------------- Main Dashboard -----------------------------
 
-# Overview metrics
+# Overview metrics with units
 st.subheader("📈 Overview")
 col1, col2, col3, col4 = st.columns(4)
 with col1:
@@ -1184,9 +1275,12 @@ with col1:
 with col2:
     st.metric("Parameters Detected", len(pcols))
 with col3:
-    st.metric(f"Mean {acc_col}", f"{df[acc_col].mean():.4f}")
+    acc_unit = get_metric_unit(acc_col)
+    st.metric(f"Mean {acc_col}", f"{df[acc_col].mean():.4f}" + (f" {acc_unit}" if acc_unit else ""))
 with col4:
-    st.metric(f"Mean {cost_col}", f"{df[cost_col].mean():.4f}")
+    cost_unit = get_metric_unit(cost_col)
+    st.metric(f"Mean {cost_col}", f"{df[cost_col].mean():.4f}" + (f" {cost_unit}" if cost_unit else ""))
+
 # ----------------------------- Pareto data (for multiple sections) -----------------------------
 
 cols_for_front = [acc_col, cost_col] + pcols
@@ -1286,11 +1380,11 @@ st.subheader("🎯 Pareto Frontier")
 
 st.write(
     f"Found **{len(front)}** Pareto-optimal configurations "
-    f"(maximize `{acc_col}`, minimize `{cost_col}`)."
+    f"(maximize `{format_metric_with_unit(acc_col)}`, minimize `{format_metric_with_unit(cost_col)}`)."
 )
 
 
-# Pareto plot
+# Pareto plot with units
 def plot_pareto(df_all, df_front, acc_col, cost_col, id_col, pcols):
     fig = go.Figure()
     
@@ -1334,10 +1428,14 @@ def plot_pareto(df_all, df_front, acc_col, cost_col, id_col, pcols):
         hoverinfo="text",
     ))
     
+    # Format axis labels with units
+    cost_label = format_metric_with_unit(cost_col)
+    acc_label = format_metric_with_unit(acc_col)
+    
     fig.update_layout(
         title="Performance vs Sustainability Trade-off",
-        xaxis_title=f"{cost_col} (minimize)",
-        yaxis_title=f"{acc_col} (maximize)",
+        xaxis_title=f"{cost_label} (minimize)",
+        yaxis_title=f"{acc_label} (maximize)",
         height=500,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
@@ -1391,11 +1489,16 @@ with st.expander("🎲 Advanced: Clustering Analysis with SHAP Importance"):
             col_plot, col_shap = st.columns([1, 1])
             
             with col_plot:
+                # Format axis labels with units
                 figc = px.scatter(
                     used, x=cost_col, y=acc_col, color="cluster_label",
                     color_discrete_sequence=px.colors.qualitative.Set2,
                     title=f"{method} Clustering on {clustering_mode}",
-                    hover_data=[c for c in pcols if c in used.columns]
+                    hover_data=[c for c in pcols if c in used.columns],
+                    labels={
+                        cost_col: format_metric_with_unit(cost_col),
+                        acc_col: format_metric_with_unit(acc_col)
+                    }
                 )
                 st.plotly_chart(figc, use_container_width=True)
             
@@ -1442,9 +1545,13 @@ with st.expander("Prescriptive analytics"):
     thr_acc = work[acc_col].quantile(q_acc)
     thr_cost = work[cost_col].quantile(q_cost)
 
+    # Format thresholds with units
+    acc_unit = get_metric_unit(acc_col)
+    cost_unit = get_metric_unit(cost_col)
+    
     st.write(
-        f"Thresholds → **{acc_col} ≥ {thr_acc:.4g}** "
-        f"and **{cost_col} ≤ {thr_cost:.4g}**."
+        f"Thresholds → **{format_metric_with_unit(acc_col)} ≥ {thr_acc:.4g}** "
+        f"and **{format_metric_with_unit(cost_col)} ≤ {thr_cost:.4g}**."
     )
 
     good_mask = (work[acc_col] >= thr_acc) & (work[cost_col] <= thr_cost)
@@ -1498,8 +1605,9 @@ if recommendations:
                 # Show how this compares to current best
                 if 'expected_performance' in rec:
                     best_perf = df[acc_col].max()
+                    acc_unit = get_metric_unit(acc_col)
                     st.metric("vs Best", 
-                             f"{best_perf:.4f}",
+                             f"{best_perf:.4f}" + (f" {acc_unit}" if acc_unit else ""),
                              delta=None)
 else:
     st.info("No recommendations generated. Try uploading more data.")
@@ -1517,6 +1625,3 @@ if recommendations:
 # ----------------------------- Footer -----------------------------
 
 st.markdown("---")
-st.caption("🧬 Built for provenance-guided hyperparameter optimization with yProv4ML")
-st.caption("📊 Upload any CSV with hyperparameters and metrics to get intelligent recommendations")
-st.caption("🆕 v2: Fixed overlapping labels, added SHAP importance with surrogate model selection")
