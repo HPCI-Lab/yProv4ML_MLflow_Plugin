@@ -9,9 +9,6 @@ yProv4ML_MLflow_Plugin/
 │   ├── demo.py                 # CIFAR-10 example
 │   ├── mnist_mlflow_demo.py    # MNIST with schedulers
 │   └── run_batch.py            # Grid/random search
-├── src/                        # Utilities
-│   ├── prov_to_csv.py          # Convert PROV to CSV
-│   └── decision_app.py         # Streamlit dashboard
 ├── test/                       # Test suite
 └── pyproject.toml              # Plugin entry points
 
@@ -33,7 +30,6 @@ A powerful MLflow plugin that seamlessly integrates [W3C PROV](https://www.w3.or
 - **📈 Full MLflow Compatibility**: Works with existing MLflow workflows, UI, and tools
 - **🔍 Comprehensive Metadata**: Captures hyperparameters, metrics, artifacts, and system info
 - **📁 Dual Storage**: Maintains both MLflow runs and PROV JSON documents
-- **🎨 Decision Support Dashboard**: Interactive Streamlit app for intelligent experiment recommendations
 
 
 
@@ -320,145 +316,6 @@ with mlflow.start_run(run_name="logistic_regression"):
 
 # PROV JSON available at: data/prov/iris_classification/prov_*.json
 ```
-
-### Example: Batch Experiments
-
-Use the included `run_batch.py` script for systematic hyperparameter sweeps:
-
-```bash
-# Grid search
-python examples/run_batch.py \
-    --script examples/demo.py \
-    --mode grid \
-    --grid batch_size=8,16,32,64 \
-    --grid lr=1e-3,1e-4,1e-5 \
-    --grid epochs=5,10 \
-    --jobs 4
-
-# Random search
-python examples/run_batch.py \
-    --script examples/demo.py \
-    --mode random \
-    --n 50 \
-    --rand batch_size=choice(8,16,32,64,128) \
-    --rand lr=log10(-5,-2) \
-    --rand epochs=int(5,20) \
-    --jobs 4
-```
-
-## 🎨 Dashboard Usage
-
-### Decision Support Dashboard
-
-The plugin includes an interactive Streamlit dashboard for analyzing experiments and getting intelligent recommendations:
-
-```bash
-# Start the dashboard
-streamlit run src/decision_app.py
-```
-
-#### Dashboard Features
-
-1. **📊 Overview Metrics**
-   - Total experiments tracked
-   - Parameter detection
-   - Mean performance and sustainability metrics
-
-2. **🔬 Solution Space Analysis**
-   - **Pairwise Analysis**: 2D slices of multi-dimensional hyperparameter space
-   - **Heatmaps**: Performance across parameter combinations
-   - **Main Effects**: Individual parameter impact
-   - **Correlations**: Relationships between parameters and metrics
-
-3. **🎯 Pareto Frontier**
-   - Visualization of trade-offs between accuracy and sustainability
-   - Interactive plots with hover tooltips
-   - Identify optimal configurations
-
-4. **💡 Intelligent Recommendations**
-   - **EXPLOIT**: Refine around best known configurations
-   - **EXPLORE**: Test underexplored parameter regions
-   - **BALANCE**: Optimize accuracy vs. sustainability trade-off
-   - **INTERPOLATE**: Fill gaps in tested parameter values
-
-5. **🎲 Advanced Clustering with SHAP**
-   - Automatic experiment grouping (KMeans, DBSCAN, etc.)
-   - SHAP feature importance for cluster assignments
-   - Understand which parameters drive experiment similarity
-
-#### Using the Dashboard
-
-1. **Export Experiments to CSV**:
-```bash
-# Convert PROV JSONs to CSV
-python src/prov_to_csv.py --root data/prov --out-dir data/unified
-```
-
-2. **Launch Dashboard**:
-```bash
-streamlit run decision_app_updated.py
-```
-
-3. **Upload CSV** via the sidebar
-
-4. **Select Metrics**:
-   - Choose performance metric (e.g., "ACC_val")
-   - Choose sustainability metric (e.g., "emissions (tCO2eq)")
-
-5. **Explore Visualizations**:
-   - Navigate through tabs for different analyses
-   - Adjust clustering parameters in the sidebar
-   - Generate and download recommendations
-
-## 🛠️ Utilities
-
-### 1. PROV to CSV Converter
-
-Convert PROV JSON files to structured CSV format for analysis:
-
-```bash
-# Basic usage
-python src/prov_to_csv.py \
-    --root data/prov \
-    --out-dir data/unified
-
-# With debug output
-python src/prov_to_csv.py \
-    --root data/prov \
-    --out-dir data/unified \
-    --debug
-```
-
-**Features**:
-- Automatically detects and reads both CSV and NetCDF metric files
-- Extracts parameters from PROV activities
-- Extracts metrics from entity files
-- Splits output by experiment for easy analysis
-- Removes empty columns per experiment
-
-**Output Structure**:
-```
-data/unified/
-├── experiment1.csv    # All runs for experiment1
-├── experiment2.csv    # All runs for experiment2
-└── experiment3.csv    # All runs for experiment3
-```
-
-### 2. Import PROV to MLflow
-
-Import existing PROV provenance data back into MLflow:
-
-```bash
-python src/import_prov_to_mlflow.py \
-    --prov-root data/prov/usecase \
-    --experiment-name imported_experiments
-```
-
-**Use Cases**:
-- Migrate PROV data to MLflow
-- Share experiments with collaborators who use MLflow
-- Visualize PROV data in MLflow UI
-
 
 ## 🔍 Configuration
 
