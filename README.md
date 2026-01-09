@@ -112,6 +112,8 @@ The plugin implements two main MLflow extension points:
 
 ```bash
 # Clone the repository
+conda create -n mlflow python=3.9
+
 git clone https://github.com/yourusername/yProv4ML_MLflow_Plugin.git
 cd yProv4ML_MLflow_Plugin
 

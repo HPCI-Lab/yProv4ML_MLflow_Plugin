@@ -130,3 +130,4 @@ __marimo__/
 *.bak
 .DS_Store
 Thumbs.db
+.devcontainer
