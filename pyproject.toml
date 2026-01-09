@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yprov-mlflow-plugin"
+version = "0.0.1"
+description = "MLflow tracking store & artifact repo plugin that mirrors to yProv4ML"
+requires-python = ">=3.9"
+dependencies = [
+  "mlflow>=2.3",
+  "prov4ml @ git+https://github.com/zdeniztas/yProvML.git@experiment_unification",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["yprov_mlflow_plugin*"]
+
+[project.entry-points."mlflow.tracking_store"]
+"yprov+http" = "yprov_mlflow_plugin.tracking:YProvTrackingStore"
+"yprov+file" = "yprov_mlflow_plugin.tracking:YProvTrackingStore"
+
+[project.entry-points."mlflow.artifact_repository"]
+"yprov+file" = "yprov_mlflow_plugin.artifacts:YProvArtifactRepo"
+"yprov+http" = "yprov_mlflow_plugin.artifacts:YProvArtifactRepo"
