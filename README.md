@@ -1,104 +1,33 @@
-# yProv4ML_MLflow_Plugin
-```
-yProv4ML_MLflow_Plugin/
-├── yprov_mlflow_plugin/       # Plugin source code
-│   ├── tracking.py             # TrackingStore implementation
-│   ├── artifacts.py            # ArtifactRepository implementation
-│   └── prov_export.py          # PROV document generator
-├── examples/                   # Example training scripts
-│   ├── demo.py                 # CIFAR-10 example
-│   ├── mnist_mlflow_demo.py    # MNIST with schedulers
-│   └── run_batch.py            # Grid/random search
-├── src/                        # Utilities
-│   ├── prov_to_csv.py          # Convert PROV to CSV
-│   └── decision_app.py         # Streamlit dashboard
-├── test/                       # Test suite
-└── pyproject.toml              # Plugin entry points
+<div align="center">
+  <a href="https://github.com/HPCI-Lab">
+    <img src="./assets/HPCI-Lab.png" alt="HPCI Lab Logo" width="100" height="100">
+  </a>
 
-```
+  <h3 align="center">yProv4ML MLflow Plugin</h3>
 
-# yProv4ML MLflow Plugin
+  <p align="center">
+    A unified interface for logging and tracking provenance information in machine learning experiments, both on distributed as well as large scale experiments.
+    <br />
+    <br />
+    <a href="https://github.com/HPCI-Lab/yProv4ML_MLflow_Plugin/issues/new?labels=bug&template=bug-report---.md">Report Bug</a>
+    &middot;
+    <a href="https://github.com/HPCI-Lab/yProv4ML_MLflow_Plugin/issues/new?labels=enhancement&template=feature-request---.md">Request Feature</a>
+  </p>
+</div>
 
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![MLflow](https://img.shields.io/badge/MLflow-2.3+-green.svg)](https://mlflow.org/)
+<br />
 
-A powerful MLflow plugin that seamlessly integrates [W3C PROV](https://www.w3.org/TR/prov-overview/)-compliant provenance tracking with sustainability metrics for machine learning experiments built on the [yProv4ML (prov4ml)](https://github.com/zdeniztas/yProvML) 
+<div align="center">
+  
+[![Contributors](https://img.shields.io/github/contributors/HPCI-Lab/yProv4ML_MLflow_Plugin?style=for-the-badge)](https://github.com/HPCI-Lab/yProv4ML_MLflow_Plugin/graphs/contributors)
+[![Forks](https://img.shields.io/github/forks/HPCI-Lab/yProv4ML_MLflow_Plugin?style=for-the-badge)](https://github.com/HPCI-Lab/yProv4ML_MLflow_Plugin/network/members)
+[![Stars](https://img.shields.io/github/stars/HPCI-Lab/yProv4ML_MLflow_Plugin?style=for-the-badge)](https://github.com/HPCI-Lab/yProv4ML_MLflow_Plugin/stargazers)
+[![Issues](https://img.shields.io/github/issues/HPCI-Lab/yProv4ML_MLflow_Plugin?style=for-the-badge)](https://github.com/HPCI-Lab/yProv4ML_MLflow_Plugin/issues)
+[![GPLv3 License](https://img.shields.io/badge/LICENCE-GPL3.0-green?style=for-the-badge)](https://opensource.org/licenses/)
 
-## 🎯 Key Features
+</div>
 
-- **🔄 Zero-Code Integration**: Drop-in replacement for standard MLflow tracking
-- **📊 W3C PROV Compliance**: Automatic generation of standardized provenance graphs
-- **🌱 Sustainability Tracking**: Built-in CodeCarbon integration for carbon footprint monitoring
-- **📈 Full MLflow Compatibility**: Works with existing MLflow workflows, UI, and tools
-- **🔍 Comprehensive Metadata**: Captures hyperparameters, metrics, artifacts, and system info
-- **📁 Dual Storage**: Maintains both MLflow runs and PROV JSON documents
-- **🎨 Decision Support Dashboard**: Interactive Streamlit app for intelligent experiment recommendations
-
-
-
-## 🏗️ Architecture Overview
-
-The plugin implements two main MLflow extension points:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Your ML Training Script                   │
-│                  (uses standard MLflow API)                  │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────────────────────┐
-│              yProv4ML MLflow Plugin Layer                    │
-│  ┌──────────────────────┐    ┌─────────────────────────┐   │
-│  │  YProvTrackingStore  │    │  YProvArtifactRepo      │   │
-│  │  (tracking.py)       │    │  (artifacts.py)         │   │
-│  └──────────┬───────────┘    └───────────┬─────────────┘   │
-│             │                             │                  │
-│             ▼                             ▼                  │
-│  ┌──────────────────────┐    ┌─────────────────────────┐   │
-│  │  Standard MLflow     │    │  Standard MLflow        │   │
-│  │  FileStore/RestStore │    │  LocalArtifactRepo      │   │
-│  └──────────┬───────────┘    └───────────┬─────────────┘   │
-└─────────────┼─────────────────────────────┼─────────────────┘
-              │                             │
-              ▼                             ▼
-     ┌────────────────┐            ┌──────────────────┐
-     │  mlruns/       │            │  mlartifacts/    │
-     │  (MLflow data) │            │  (artifacts)     │
-     └────────────────┘            └──────────────────┘
-              │                             │
-              └──────────┬──────────────────┘
-                         │
-                         ▼
-              ┌──────────────────────┐
-              │  prov4ml Integration │
-              └──────────┬───────────┘
-                         │
-                         ▼
-              ┌──────────────────────┐
-              │  data/prov/          │
-              │  (PROV JSON files)   │
-              └──────────────────────┘
-```
-
-### Component Breakdown
-
-1. **YProvTrackingStore** (`tracking.py`)
-   - Intercepts MLflow tracking calls (params, metrics, runs)
-   - Delegates to standard MLflow storage (FileStore or RestStore)
-   - Simultaneously logs to prov4ml for W3C PROV generation
-   - Generates PROV JSON on run completion
-
-2. **YProvArtifactRepo** (`artifacts.py`)
-   - Handles artifact logging (models, configs, plots)
-   - Mirrors artifacts to both MLflow and PROV storage
-   - Maintains artifact provenance metadata
-
-3. **PROV Export** (`prov_export.py`)
-   - Converts MLflow run data to W3C PROV format
-   - Extracts metadata from activities and entities
-   - Generates JSON-LD compatible provenance documents
+An MLflow plugin that integrates [W3C PROV](https://www.w3.org/TR/prov-overview/)-compliant provenance tracking with sustainability metrics for machine learning experiments built on the [yProv4ML (prov4ml)](https://github.com/zdeniztas/yProvML) library. 
 
 ## 🚀 Installation
 
@@ -111,19 +40,17 @@ The plugin implements two main MLflow extension points:
 ### Installation (Recommended)
 
 ```bash
+pip install -r requirements.txt
+```
+
+```bash
 # Clone the repository
 git clone https://github.com/yourusername/yProv4ML_MLflow_Plugin.git
 cd yProv4ML_MLflow_Plugin
 
 # Install the plugin in development mode
-pip install -e .
+pip install .
 ```
-
-#### **Install Requirements** 
-```bash
-pip install -r requirements.txt
-```
-
 
 ### Verify Installation
 
@@ -139,30 +66,6 @@ python -c "from importlib.metadata import entry_points; eps = [ep for ep in entr
 
 # Test basic functionality
 python -c "import mlflow; mlflow.set_tracking_uri('yprov+file:///tmp/test'); print('✅ Plugin activated successfully')"
-```
-
-### Platform-Specific Notes
-
-#### **Windows**
-```bash
-# Use forward slashes or Path objects
-mlflow.set_tracking_uri("yprov+file:///C:/Users/user/mlruns")
-
-# Or use pathlib
-from pathlib import Path
-mlflow.set_tracking_uri(f"yprov+file:///{Path('C:/Users/user/mlruns').as_posix()}")
-```
-
-#### **WSL / Linux**
-```bash
-# Standard Unix paths work directly
-mlflow.set_tracking_uri("yprov+file:///home/user/mlruns")
-```
-
-#### **macOS**
-```bash
-# Standard Unix paths
-mlflow.set_tracking_uri("yprov+file:///Users/user/mlruns")
 ```
 
 ## ⚡ Quick Start
@@ -193,366 +96,6 @@ with mlflow.start_run(run_name="example_run"):
 
 # ✅ PROV JSON automatically generated in data/prov/my_experiment/
 ```
-
-
-## 🔧 How It Works
-
-### Plugin Activation
-
-The plugin registers itself via setuptools entry points defined in `pyproject.toml`:
-
-```toml
-[project.entry-points."mlflow.tracking_store"]
-"yprov+http" = "yprov_mlflow_plugin.tracking:YProvTrackingStore"
-"yprov+file" = "yprov_mlflow_plugin.tracking:YProvTrackingStore"
-
-[project.entry-points."mlflow.artifact_repository"]
-"yprov+file" = "yprov_mlflow_plugin.artifacts:YProvArtifactRepo"
-"yprov+http" = "yprov_mlflow_plugin.artifacts:YProvArtifactRepo"
-```
-
-When MLflow sees a URI starting with `yprov+`, it automatically routes calls through the plugin.
-
-### Data Flow
-
-#### 1. Run Creation (`mlflow.start_run()`)
-
-```python
-# User code
-with mlflow.start_run(run_name="my_run"):
-    # ...
-
-# What happens internally:
-# 1. YProvTrackingStore.create_run() is called
-# 2. Creates standard MLflow run in mlruns/
-# 3. Calls prov4ml.start_run() with:
-#    - experiment_name
-#    - provenance_save_dir (data/prov/experiment_name/)
-#    - metrics_file_type (CSV or NetCDF)
-# 4. Returns MLflow Run object
-```
-
-#### 2. Parameter Logging (`mlflow.log_param()`)
-
-```python
-# User code
-mlflow.log_param("learning_rate", 0.001)
-
-# What happens internally:
-# 1. YProvTrackingStore.log_param() is called
-# 2. Logs to MLflow: mlruns/exp_id/run_id/params/learning_rate
-# 3. Calls prov4ml.log_param("learning_rate", 0.001)
-# 4. Stores in PROV context for later JSON generation
-```
-
-#### 3. Metric Logging (`mlflow.log_metric()`)
-
-```python
-# User code
-mlflow.log_metric("loss", 0.5, step=1)
-
-# What happens internally:
-# 1. YProvTrackingStore.log_metric() is called
-# 2. Logs to MLflow: mlruns/exp_id/run_id/metrics/loss
-# 3. Calls prov4ml.log_metric("loss", 0.5, step=1)
-# 4. Writes to CSV/NetCDF: data/prov/experiment/metrics/loss.csv
-```
-
-#### 4. Artifact Logging (`mlflow.log_artifact()`)
-
-```python
-# User code
-mlflow.log_artifact("model.pt", artifact_path="models")
-
-# What happens internally:
-# 1. YProvArtifactRepo.log_artifact() is called
-# 2. Copies to MLflow: mlartifacts/run_id/models/model.pt
-# 3. Calls prov4ml.log_artifact() to record in PROV
-# 4. Stores artifact metadata for provenance graph
-```
-
-#### 5. Run Completion (`mlflow.end_run()` or context exit)
-
-```python
-# User code (explicit or implicit)
-mlflow.end_run()
-# or
-# with mlflow.start_run():
-#     ...  # auto-closes on exit
-
-# What happens internally:
-# 1. YProvTrackingStore.set_terminated() is called
-# 2. Calls prov4ml.end_run(create_graph=True)
-# 3. Generates PROV JSON in data/prov/experiment/prov_*.json
-# 4. Updates MLflow run status
-
-
-## 📚 Usage Examples
-
-### Example 1: Simple Classification
-
-```python
-import mlflow
-from pathlib import Path
-
-# Setup
-mlflow.set_tracking_uri("yprov+file:///home/user/mlruns")
-mlflow.set_experiment("iris_classification")
-
-with mlflow.start_run(run_name="logistic_regression"):
-    # Parameters
-    mlflow.log_param("model_type", "logistic_regression")
-    mlflow.log_param("solver", "lbfgs")
-    mlflow.log_param("max_iter", 100)
-    
-    # Training (your code here)
-    # ...
-    
-    # Metrics
-    mlflow.log_metric("train_accuracy", 0.95)
-    mlflow.log_metric("test_accuracy", 0.93)
-    mlflow.log_metric("f1_score", 0.94)
-    
-    # Save model
-    mlflow.log_artifact("model.pkl", artifact_path="models")
-
-# PROV JSON available at: data/prov/iris_classification/prov_*.json
-```
-
-### Example: Batch Experiments
-
-Use the included `run_batch.py` script for systematic hyperparameter sweeps:
-
-```bash
-# Grid search
-python examples/run_batch.py \
-    --script examples/demo.py \
-    --mode grid \
-    --grid batch_size=8,16,32,64 \
-    --grid lr=1e-3,1e-4,1e-5 \
-    --grid epochs=5,10 \
-    --jobs 4
-
-# Random search
-python examples/run_batch.py \
-    --script examples/demo.py \
-    --mode random \
-    --n 50 \
-    --rand batch_size=choice(8,16,32,64,128) \
-    --rand lr=log10(-5,-2) \
-    --rand epochs=int(5,20) \
-    --jobs 4
-```
-
-## 🎨 Dashboard Usage
-
-### Decision Support Dashboard
-
-The plugin includes an interactive Streamlit dashboard for analyzing experiments and getting intelligent recommendations:
-
-```bash
-# Start the dashboard
-streamlit run src/decision_app.py
-```
-
-#### Dashboard Features
-
-1. **📊 Overview Metrics**
-   - Total experiments tracked
-   - Parameter detection
-   - Mean performance and sustainability metrics
-
-2. **🔬 Solution Space Analysis**
-   - **Pairwise Analysis**: 2D slices of multi-dimensional hyperparameter space
-   - **Heatmaps**: Performance across parameter combinations
-   - **Main Effects**: Individual parameter impact
-   - **Correlations**: Relationships between parameters and metrics
-
-3. **🎯 Pareto Frontier**
-   - Visualization of trade-offs between accuracy and sustainability
-   - Interactive plots with hover tooltips
-   - Identify optimal configurations
-
-4. **💡 Intelligent Recommendations**
-   - **EXPLOIT**: Refine around best known configurations
-   - **EXPLORE**: Test underexplored parameter regions
-   - **BALANCE**: Optimize accuracy vs. sustainability trade-off
-   - **INTERPOLATE**: Fill gaps in tested parameter values
-
-5. **🎲 Advanced Clustering with SHAP**
-   - Automatic experiment grouping (KMeans, DBSCAN, etc.)
-   - SHAP feature importance for cluster assignments
-   - Understand which parameters drive experiment similarity
-
-#### Using the Dashboard
-
-1. **Export Experiments to CSV**:
-```bash
-# Convert PROV JSONs to CSV
-python src/prov_to_csv.py --root data/prov --out-dir data/unified
-```
-
-2. **Launch Dashboard**:
-```bash
-streamlit run decision_app_updated.py
-```
-
-3. **Upload CSV** via the sidebar
-
-4. **Select Metrics**:
-   - Choose performance metric (e.g., "ACC_val")
-   - Choose sustainability metric (e.g., "emissions (tCO2eq)")
-
-5. **Explore Visualizations**:
-   - Navigate through tabs for different analyses
-   - Adjust clustering parameters in the sidebar
-   - Generate and download recommendations
-
-## 🛠️ Utilities
-
-### 1. PROV to CSV Converter
-
-Convert PROV JSON files to structured CSV format for analysis:
-
-```bash
-# Basic usage
-python src/prov_to_csv.py \
-    --root data/prov \
-    --out-dir data/unified
-
-# With debug output
-python src/prov_to_csv.py \
-    --root data/prov \
-    --out-dir data/unified \
-    --debug
-```
-
-**Features**:
-- Automatically detects and reads both CSV and NetCDF metric files
-- Extracts parameters from PROV activities
-- Extracts metrics from entity files
-- Splits output by experiment for easy analysis
-- Removes empty columns per experiment
-
-**Output Structure**:
-```
-data/unified/
-├── experiment1.csv    # All runs for experiment1
-├── experiment2.csv    # All runs for experiment2
-└── experiment3.csv    # All runs for experiment3
-```
-
-### 2. Import PROV to MLflow
-
-Import existing PROV provenance data back into MLflow:
-
-```bash
-python src/import_prov_to_mlflow.py \
-    --prov-root data/prov/usecase \
-    --experiment-name imported_experiments
-```
-
-**Use Cases**:
-- Migrate PROV data to MLflow
-- Share experiments with collaborators who use MLflow
-- Visualize PROV data in MLflow UI
-
-
-## 🔍 Configuration
-
-### Environment Variables
-
-Control plugin behavior via environment variables:
-
-```bash
-# PROV output directory
-export YPROV_OUT_DIR="/path/to/prov/output"
-# Default: data/prov
-
-# Enable debug logging
-export YPROV_DEBUG="1"
-# Default: 0
-
-# User namespace for PROV documents
-export YPROV_USER_NAMESPACE="MyOrganization"
-# Default: yProv4ML
-
-# Collect all system processes (more overhead)
-export YPROV_COLLECT_ALL="1"
-# Default: 0
-
-# Unify experiments in single PROV document
-export YPROV_UNIFY="1"
-# Default: 0
-
-# Custom merged PROV file path (when YPROV_UNIFY=1)
-export YPROV_MERGED_PATH="/path/to/merged_prov.json"
-# Default: data/prov/merged_provenance.json
-```
-
-### Python Configuration
-
-```python
-import os
-import mlflow
-
-# Set configuration before mlflow.set_tracking_uri()
-os.environ["YPROV_OUT_DIR"] = "/custom/prov/dir"
-os.environ["YPROV_DEBUG"] = "1"
-os.environ["YPROV_USER_NAMESPACE"] = "MyProject"
-
-# Then activate plugin
-mlflow.set_tracking_uri("yprov+file:///path/to/mlruns")
-```
-
-### Development Setup
-
-```bash
-# Clone the repo
-git clone https://github.com/yourusername/yProv4ML_MLflow_Plugin.git
-cd yProv4ML_MLflow_Plugin
-
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install in development mode with all dependencies
-pip install -e ".[dev,test,docs]"
-
-# Install pre-commit hooks
-pre-commit install
-```
-
-### Running Tests
-
-```bash
-# Run all tests
-pytest test/ -v
-```
-
-
-### Submitting Changes
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes
-4. Add tests for new functionality
-5. Run the test suite (`pytest`)
-6. Commit your changes (`git commit -m 'Add amazing feature'`)
-7. Push to the branch (`git push origin feature/amazing-feature`)
-8. Open a Pull Request
-
-### Areas for Contribution
-
-- 🐛 **Bug fixes**: See [Issues](https://github.com/yourusername/yProv4ML_MLflow_Plugin/issues)
-- 📚 **Documentation**: Improve guides, add examples
-- ✨ **Features**: 
-  - Additional dashboard visualizations
-  - More export formats (CSV, Parquet, etc.)
-  - Integration with other tracking tools
-  - Performance optimizations
-- 🧪 **Testing**: Increase test coverage, add edge cases
-
 
 ## 🙏 Acknowledgments
 
