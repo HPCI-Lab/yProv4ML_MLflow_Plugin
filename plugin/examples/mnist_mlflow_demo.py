@@ -108,7 +108,7 @@ def load_mnist_dataset(root: str, train: bool, transform) -> MNIST:
     return MNIST(root, train=train, download=download, transform=transform)
 
 
-def _subset_first_n(ds, n):
+def _subset_first_n(ds, n: int | None):
     if n is None:
         return ds
     n = int(n)
@@ -145,47 +145,47 @@ class LRLogger:
 # Learning Rate Scheduler Factory
 # ============================================================================
 
-def create_scheduler(optimizer, args, steps_per_epoch: Optional[int] = None) -> Tuple[Optional[object], str]:
-    if args.scheduler == "none":
-        return None, "epoch"
+    def create_scheduler(optimizer, args, steps_per_epoch: Optional[int] = None) -> Tuple[Optional[object], str]:
+        if args.scheduler == "none":
+            return None, "epoch"
 
-    if args.scheduler == "step":
-        scheduler = torch.optim.lr_scheduler.StepLR(
-            optimizer, step_size=args.lr_step_size, gamma=args.lr_gamma
-        )
-        return scheduler, "epoch"
+        if args.scheduler == "step":
+            scheduler = torch.optim.lr_scheduler.StepLR(
+                optimizer, step_size=args.lr_step_size, gamma=args.lr_gamma
+            )
+            return scheduler, "epoch"
 
-    if args.scheduler == "exp":
-        scheduler = torch.optim.lr_scheduler.ExponentialLR(
-            optimizer, gamma=args.lr_gamma
-        )
-        return scheduler, "epoch"
+        if args.scheduler == "exp":
+            scheduler = torch.optim.lr_scheduler.ExponentialLR(
+                optimizer, gamma=args.lr_gamma
+            )
+            return scheduler, "epoch"
 
-    if args.scheduler == "cosine":
-        T_max = args.t_max if args.t_max is not None else args.epochs
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=T_max)
-        return scheduler, "epoch"
+        if args.scheduler == "cosine":
+            T_max = args.t_max if args.t_max is not None else args.epochs
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=T_max)
+            return scheduler, "epoch"
 
-    if args.scheduler == "onecycle":
-        if steps_per_epoch is None:
-            raise ValueError("OneCycleLR requires steps_per_epoch")
-        max_lr = args.max_lr if args.max_lr is not None else args.lr * 10.0
-        scheduler = torch.optim.lr_scheduler.OneCycleLR(
-            optimizer,
-            max_lr=max_lr,
-            steps_per_epoch=steps_per_epoch,
-            epochs=args.epochs,
-            pct_start=args.pct_start,
-        )
-        return scheduler, "batch"
+        if args.scheduler == "onecycle":
+            if steps_per_epoch is None:
+                raise ValueError("OneCycleLR requires steps_per_epoch")
+            max_lr = args.max_lr if args.max_lr is not None else args.lr * 10.0
+            scheduler = torch.optim.lr_scheduler.OneCycleLR(
+                optimizer,
+                max_lr=max_lr,
+                steps_per_epoch=steps_per_epoch,
+                epochs=args.epochs,
+                pct_start=args.pct_start,
+            )
+            return scheduler, "batch"
 
-    if args.scheduler == "plateau":
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode="min", factor=args.lr_gamma, patience=args.plateau_patience
-        )
-        return scheduler, "plateau"
+        if args.scheduler == "plateau":
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, mode="min", factor=args.lr_gamma, patience=args.plateau_patience
+            )
+            return scheduler, "plateau"
 
-    raise ValueError(f"Unknown scheduler: {args.scheduler}")
+        raise ValueError(f"Unknown scheduler: {args.scheduler}")
 
 
 # ============================================================================
@@ -193,153 +193,153 @@ def create_scheduler(optimizer, args, steps_per_epoch: Optional[int] = None) -> 
 # ============================================================================
 
 
-def train_mnist(args):
-    device = torch.device(
-        args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu"
-    )
-    print(f"🖥️  Using device: {device}")
+    def train_mnist(args):
+        device = torch.device(
+            args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu"
+        )
+        print(f"🖥️  Using device: {device}")
 
-    transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.1307,), (0.3081,)),  # MNIST mean/std
-    ])
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.1307,), (0.3081,)),  # MNIST mean/std
+        ])
 
-    os.makedirs(args.data_dir, exist_ok=True)
-    train_dataset = load_mnist_dataset(args.data_dir, train=True,  transform=transform)
-    test_dataset  = load_mnist_dataset(args.data_dir, train=False, transform=transform)
+        os.makedirs(args.data_dir, exist_ok=True)
+        train_dataset = load_mnist_dataset(args.data_dir, train=True,  transform=transform)
+        test_dataset  = load_mnist_dataset(args.data_dir, train=False, transform=transform)
 
-    # Clamp requested subset sizes to the dataset length
-    train_n = args.batch_size * 200
-    test_n  = args.batch_size * 100
+        # Clamp requested subset sizes to the dataset length
+        train_n = args.batch_size * 200
+        test_n  = args.batch_size * 100
 
-    train_subset = _subset_first_n(train_dataset, train_n)
-    test_subset  = _subset_first_n(test_dataset,  test_n)
+        train_subset = _subset_first_n(train_dataset, train_n)
+        test_subset  = _subset_first_n(test_dataset,  test_n)
 
-    train_loader = DataLoader(train_subset, batch_size=args.batch_size, shuffle=True)
-    test_loader  = DataLoader(test_subset,  batch_size=args.batch_size, shuffle=False)
+        train_loader = DataLoader(train_subset, batch_size=args.batch_size, shuffle=True)
+        test_loader  = DataLoader(test_subset,  batch_size=args.batch_size, shuffle=False)
 
-    print(f"📊 Training samples: {len(train_subset)}")
-    print(f"📊 Test samples: {len(test_subset)}")
+        print(f"📊 Training samples: {len(train_subset)}")
+        print(f"📊 Test samples: {len(test_subset)}")
 
-    model = CNN().to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-    loss_fn = nn.MSELoss()
+        model = CNN().to(device)
+        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+        loss_fn = nn.MSELoss()
 
-    steps_per_epoch = len(train_loader)
-    scheduler, schedule_mode = create_scheduler(optimizer, args, steps_per_epoch)
-    if scheduler:
-        print(f"📈 LR Scheduler: {args.scheduler} (mode: {schedule_mode})")
+        steps_per_epoch = len(train_loader)
+        scheduler, schedule_mode = create_scheduler(optimizer, args, steps_per_epoch)
+        if scheduler:
+            print(f"📈 LR Scheduler: {args.scheduler} (mode: {schedule_mode})")
 
-    outputs_dir = Path("outputs")
-    outputs_dir.mkdir(parents=True, exist_ok=True)
-    lr_csv = outputs_dir / "lr_trace.csv"
-    lr_logger = LRLogger(lr_csv)
+        outputs_dir = Path("outputs")
+        outputs_dir.mkdir(parents=True, exist_ok=True)
+        lr_csv = outputs_dir / "lr_trace.csv"
+        lr_logger = LRLogger(lr_csv)
 
-    global_step = 0
-    for epoch in range(args.epochs):
-        epoch_start = time.time()
-        model.train()
-        last_batch_loss = None
+        global_step = 0
+        for epoch in range(args.epochs):
+            epoch_start = time.time()
+            model.train()
+            last_batch_loss = None
 
-        for batch_idx, (x, y) in enumerate(train_loader):
-            x, y = x.to(device), y.to(device)
-            optimizer.zero_grad(set_to_none=True)
-            logits = model(x)
-            y_onehot = F.one_hot(y, num_classes=10).float()
-            loss = loss_fn(logits, y_onehot)
-            loss.backward()
-            optimizer.step()
-
-            last_batch_loss = float(loss.item())
-            global_step += 1
-
-            if schedule_mode == "batch" and scheduler is not None:
-                scheduler.step()
-                lr_logger.log("batch", global_step, optimizer)
-
-        if schedule_mode == "epoch" and scheduler is not None:
-            scheduler.step()
-            lr_logger.log("epoch", epoch, optimizer)
-
-        model.eval()
-        val_loss_sum = 0.0
-        correct = 0
-        total = 0
-        with torch.no_grad():
-            for x, y in test_loader:
+            for batch_idx, (x, y) in enumerate(train_loader):
                 x, y = x.to(device), y.to(device)
+                optimizer.zero_grad(set_to_none=True)
                 logits = model(x)
                 y_onehot = F.one_hot(y, num_classes=10).float()
-                val_loss = loss_fn(logits, y_onehot)
-                val_loss_sum += float(val_loss.item())
-                pred = logits.argmax(dim=1)
-                correct += int((pred == y).sum().item())
-                total += int(y.size(0))
+                loss = loss_fn(logits, y_onehot)
+                loss.backward()
+                optimizer.step()
 
-        avg_val_loss = val_loss_sum / max(1, len(test_loader))
-        accuracy = correct / max(1, total)
+                last_batch_loss = float(loss.item())
+                global_step += 1
 
-        if schedule_mode == "plateau" and scheduler is not None:
-            scheduler.step(avg_val_loss)
-            lr_logger.log("epoch", epoch, optimizer)
+                if schedule_mode == "batch" and scheduler is not None:
+                    scheduler.step()
+                    lr_logger.log("batch", global_step, optimizer)
 
-        epoch_time_ms = (time.time() - epoch_start) * 1000.0
-        mlflow.log_metric("train_epoch_time_ms", epoch_time_ms, step=epoch)
-        mlflow.log_metric("MSE_train", last_batch_loss if last_batch_loss is not None else np.nan, step=epoch)
-        mlflow.log_metric("MSE_val", avg_val_loss, step=epoch)
-        mlflow.log_metric("ACC_val", accuracy, step=epoch)
+            if schedule_mode == "epoch" and scheduler is not None:
+                scheduler.step()
+                lr_logger.log("epoch", epoch, optimizer)
 
-        if PSUTIL_OK:
-            try:
-                mlflow.log_metric("cpu_usage", float(psutil.cpu_percent(interval=None)), step=epoch)
-                vm = psutil.virtual_memory()
-                mlflow.log_metric("memory_usage", float(vm.percent), step=epoch)
-                du = psutil.disk_usage("/")
-                mlflow.log_metric("disk_usage", float(du.percent), step=epoch)
-            except Exception:
-                pass
+            model.eval()
+            val_loss_sum = 0.0
+            correct = 0
+            total = 0
+            with torch.no_grad():
+                for x, y in test_loader:
+                    x, y = x.to(device), y.to(device)
+                    logits = model(x)
+                    y_onehot = F.one_hot(y, num_classes=10).float()
+                    val_loss = loss_fn(logits, y_onehot)
+                    val_loss_sum += float(val_loss.item())
+                    pred = logits.argmax(dim=1)
+                    correct += int((pred == y).sum().item())
+                    total += int(y.size(0))
 
-        print(
-            f"Epoch {epoch+1}/{args.epochs} | "
-            f"Train Loss: {last_batch_loss:.4f} | "
-            f"Val Loss: {avg_val_loss:.4f} | "
-            f"Accuracy: {accuracy:.4f} | "
-            f"Time: {epoch_time_ms:.0f}ms"
-        )
+            avg_val_loss = val_loss_sum / max(1, len(test_loader))
+            accuracy = correct / max(1, total)
 
-    model_path = outputs_dir / "model.pt"
-    torch.save(model.state_dict(), model_path)
-    mlflow.log_artifact(str(model_path), artifact_path="model")
+            if schedule_mode == "plateau" and scheduler is not None:
+                scheduler.step(avg_val_loss)
+                lr_logger.log("epoch", epoch, optimizer)
 
-    if np.isfinite(lr_logger.lr_min):
-        mlflow.log_metric("lr_min", float(lr_logger.lr_min))
-    if np.isfinite(lr_logger.lr_max):
-        mlflow.log_metric("lr_max", float(lr_logger.lr_max))
+            epoch_time_ms = (time.time() - epoch_start) * 1000.0
+            mlflow.log_metric("train_epoch_time_ms", epoch_time_ms, step=epoch)
+            mlflow.log_metric("MSE_train", last_batch_loss if last_batch_loss is not None else np.nan, step=epoch)
+            mlflow.log_metric("MSE_val", avg_val_loss, step=epoch)
+            mlflow.log_metric("ACC_val", accuracy, step=epoch)
 
-    mlflow.log_artifact(str(lr_csv), artifact_path="analysis")
-    print(f"✅ Training complete. Model saved to {model_path}")
+            if PSUTIL_OK:
+                try:
+                    mlflow.log_metric("cpu_usage", float(psutil.cpu_percent(interval=None)), step=epoch)
+                    vm = psutil.virtual_memory()
+                    mlflow.log_metric("memory_usage", float(vm.percent), step=epoch)
+                    du = psutil.disk_usage("/")
+                    mlflow.log_metric("disk_usage", float(du.percent), step=epoch)
+                except Exception:
+                    pass
+
+            print(
+                f"Epoch {epoch+1}/{args.epochs} | "
+                f"Train Loss: {last_batch_loss:.4f} | "
+                f"Val Loss: {avg_val_loss:.4f} | "
+                f"Accuracy: {accuracy:.4f} | "
+                f"Time: {epoch_time_ms:.0f}ms"
+            )
+
+        model_path = outputs_dir / "model.pt"
+        torch.save(model.state_dict(), model_path)
+        mlflow.log_artifact(str(model_path), artifact_path="model")
+
+        if np.isfinite(lr_logger.lr_min):
+            mlflow.log_metric("lr_min", float(lr_logger.lr_min))
+        if np.isfinite(lr_logger.lr_max):
+            mlflow.log_metric("lr_max", float(lr_logger.lr_max))
+
+        mlflow.log_artifact(str(lr_csv), artifact_path="analysis")
+        print(f"✅ Training complete. Model saved to {model_path}")
 
 
 # ============================================================================
 # Toy Training Loop (No PyTorch)
 # ============================================================================
 
-def train_toy_mode(args):
-    print("⚠️  Running in toy mode (PyTorch not available)")
-    mlflow.log_param("note", "Torch not available; logging toy metrics only")
-    for step, loss in enumerate([0.7, 0.42, 0.31, 0.27, 0.25], start=1):
-        mlflow.log_metric("MSE_train", loss, step=step)
-        time.sleep(0.05)
-    mlflow.log_metric("MSE_val", 0.24)
-    mlflow.log_metric("ACC_val", 0.10)
-    mlflow.log_metric("train_epoch_time_ms", 1000.0)
-    if PSUTIL_OK:
-        mlflow.log_metric("cpu_usage", float(psutil.cpu_percent(interval=None)))
-        vm = psutil.virtual_memory()
-        mlflow.log_metric("memory_usage", float(vm.percent))
-        du = psutil.disk_usage("/")
-        mlflow.log_metric("disk_usage", float(du.percent))
-    print("✅ Toy training complete")
+    def train_toy_mode(args):
+        print("⚠️  Running in toy mode (PyTorch not available)")
+        mlflow.log_param("note", "Torch not available; logging toy metrics only")
+        for step, loss in enumerate([0.7, 0.42, 0.31, 0.27, 0.25], start=1):
+            mlflow.log_metric("MSE_train", loss, step=step)
+            time.sleep(0.05)
+        mlflow.log_metric("MSE_val", 0.24)
+        mlflow.log_metric("ACC_val", 0.10)
+        mlflow.log_metric("train_epoch_time_ms", 1000.0)
+        if PSUTIL_OK:
+            mlflow.log_metric("cpu_usage", float(psutil.cpu_percent(interval=None)))
+            vm = psutil.virtual_memory()
+            mlflow.log_metric("memory_usage", float(vm.percent))
+            du = psutil.disk_usage("/")
+            mlflow.log_metric("disk_usage", float(du.percent))
+        print("✅ Toy training complete")
 
 
 # ============================================================================

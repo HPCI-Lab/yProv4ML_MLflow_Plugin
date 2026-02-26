@@ -1,0 +1,13 @@
+# requirements.txt – minimal, for users who prefer pip -r over pyproject extras.
+#
+# This file installs only what the plugin itself needs.
+# For optional features, see the sections below or use pyproject.toml extras:
+#
+#   pip install -e ".[examples]"   # demo training scripts
+#   pip install -e ".[dashboard]"  # Streamlit decision app
+#   pip install -e ".[dev]"        # full development environment
+
+mlflow>=2.3
+
+# prov4ml must be installed from the upstream git fork:
+# pip install git+https://github.com/zdeniztas/yProvML.git@experiment_unification
