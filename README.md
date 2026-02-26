@@ -6,7 +6,7 @@
   <h3 align="center">yProv4ML MLflow Plugin</h3>
 
   <p align="center">
-    A unified interface for logging and tracking provenance information in machine learning experiments, both on distributed as well as large scale experiments.
+    An MLflow plugin that integrates [W3C PROV](https://www.w3.org/TR/prov-overview/)-compliant provenance tracking with sustainability metrics for machine learning experiments built on the [yProv4ML (prov4ml)](https://github.com/HPCI-Lab/yProvML) library. 
     <br />
     <br />
     <a href="https://github.com/HPCI-Lab/yProv4ML_MLflow_Plugin/issues/new?labels=bug&template=bug-report---.md">Report Bug</a>
@@ -26,8 +26,6 @@
 [![GPLv3 License](https://img.shields.io/badge/LICENCE-GPL3.0-green?style=for-the-badge)](https://opensource.org/licenses/)
 
 </div>
-
-An MLflow plugin that integrates [W3C PROV](https://www.w3.org/TR/prov-overview/)-compliant provenance tracking with sustainability metrics for machine learning experiments built on the [yProv4ML (prov4ml)](https://github.com/zdeniztas/yProvML) library. 
 
 ## 🚀 Installation
 
