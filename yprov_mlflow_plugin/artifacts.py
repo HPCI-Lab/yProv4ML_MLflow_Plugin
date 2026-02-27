@@ -7,7 +7,6 @@ while delegating the actual file storage to the real backend
 """
 from __future__ import annotations
 
-import inspect
 import os
 from pathlib import Path
 from typing import Optional
@@ -30,19 +29,6 @@ except ImportError:
 # Import yProv4ML — same logic as tracking.py
 # ---------------------------------------------------------------------------
 import yprov4ml               # pip install yprov4ml  (HPCI-Lab main)
-
-# ---------------------------------------------------------------------------
-# Introspect log_artifact signature once
-# ---------------------------------------------------------------------------
-def _accepted(fn) -> Optional[set]:
-    try:
-        sig = inspect.signature(fn)
-        for p in sig.parameters.values():
-            if p.kind == inspect.Parameter.VAR_KEYWORD:
-                return None
-        return set(sig.parameters)
-    except Exception:
-        return set()
 
 DEBUG = os.getenv("YPROV_DEBUG", "").lower() in ("1", "true", "yes", "on")
 

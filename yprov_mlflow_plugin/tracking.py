@@ -1,44 +1,3 @@
-"""
-YProvTrackingStore — MLflow AbstractStore that mirrors every tracking call
-to the HPCI-Lab yProv4ML library (https://github.com/HPCI-Lab/yProv4ML).
-
-HOW IT WORKS
-------------
-Set your MLflow tracking URI with the ``yprov+`` prefix:
-
-    mlflow.set_tracking_uri("yprov+file:///absolute/path/to/mlruns")
-    # or for a remote server:
-    mlflow.set_tracking_uri("yprov+http://my-server:5000")
-
-Every mlflow.* call then:
-  1. Is forwarded to the real MLflow FileStore / RestStore (normal data preserved).
-  2. Also calls the matching yprov4ml function so provenance is recorded.
-
-MLflow → yprov4ml mapping
---------------------------
-  mlflow.start_run()       -> yprov4ml.start_run(experiment_name, provenance_save_dir)
-  mlflow.log_param(k, v)   -> yprov4ml.log_param(k, v)
-  mlflow.log_metric(k, v)  -> yprov4ml.log_metric(k, v, step=...)
-  mlflow.log_artifact(f)   -> yprov4ml.log_artifact(f)        ← via YProvArtifactRepo
-  mlflow.end_run()         -> yprov4ml.end_run(create_graph=True)
-
-WHY artifact logging requires yprov+ prefix on artifact_uri
--------------------------------------------------------------
-MLflow resolves which ArtifactRepository class to use by looking at the
-URI scheme of run.info.artifact_uri (e.g. "file://..." vs "yprov+file://...").
-If that URI doesn't start with "yprov+", the YProvArtifactRepo entry-point
-is never triggered, regardless of the tracking URI.
-
-This store ensures every experiment's artifact_location starts with "yprov+"
-by overriding create_experiment(), and patches existing runs via get_run().
-
-Environment variables
----------------------
-  YPROV_OUT_DIR          root directory for provenance output (default: data/prov)
-  YPROV_USER_NAMESPACE   PROV namespace identifier     (default: yProv4ML)
-  YPROV_DEBUG            set to 1 for verbose logging
-  YPROV_TEST_SHIM        set to 1 to force in-memory shim  (tests only)
-"""
 from __future__ import annotations
 
 import inspect
@@ -63,12 +22,8 @@ try:
     import yprov4ml as yprov
     _YPROV_SOURCE = "yprov4ml"
 except ImportError:
-    try:
-        import prov4ml as yprov        # type: ignore[no-redef]  old fork fallback
-        _YPROV_SOURCE = "prov4ml"
-    except ImportError:
-        yprov = None                   # type: ignore[assignment]
-        _YPROV_SOURCE = None
+    yprov = None                   # type: ignore[assignment]
+    _YPROV_SOURCE = None
 
 # ---------------------------------------------------------------------------
 # Introspect real function signatures once at import time so we never
@@ -269,7 +224,7 @@ def _yprov_start_run(exp_name: str, exp_dir: str) -> bool:
 def _yprov_end_run() -> bool:
     if not yprov or not hasattr(yprov, "end_run"):
         return False
-    desired = dict(create_graph=True, create_svg=False)
+    desired = dict(create_graph=True, create_svg=True)
     kwargs  = _filter_kwargs(desired, _END_RUN_PARAMS)
     try:
         yprov.end_run(**kwargs)

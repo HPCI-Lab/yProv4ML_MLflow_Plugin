@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "yprov-mlflow-plugin"
-version = "0.0.1"
+version = "0.1.0"
 description = "MLflow tracking store & artifact repo plugin that mirrors to yProv4ML (HPCI-Lab)"
 requires-python = ">=3.9"
 dependencies = [
