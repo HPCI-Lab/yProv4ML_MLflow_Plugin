@@ -2,29 +2,94 @@
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
+# ---------------------------------------------------------------------------
+# Project metadata — all fields below appear on the PyPI project page
+# ---------------------------------------------------------------------------
 [project]
-name = "yprov-mlflow-plugin"
-version = "0.1.0"
-description = "MLflow tracking store & artifact repo plugin that mirrors to yProv4ML (HPCI-Lab)"
+name            = "yprov-mlflow-plugin"
+version         = "0.2.0"
+description     = "MLflow plugin that adds W3C PROV provenance tracking to every experiment via yProv4ML"
+readme          = "README.md"
 requires-python = ">=3.9"
+license         = { file = "LICENSE" }
+
+authors = [
+  { name = "HPCI Lab", email = "gabriele.padovani@unitn.it" },
+]
+
+keywords = [
+  "mlflow", "provenance", "prov4ml", "yprov4ml",
+  "machine-learning", "reproducibility", "W3C-PROV",
+]
+
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
 dependencies = [
-  "mlflow",
+  "mlflow>=2.3",
   "yprov4ml",
 ]
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["yprov_mlflow_plugin*"]
+[project.urls]
+Homepage      = "https://github.com/HPCI-Lab/yProv4ML_MLflow_Plugin"
+Repository    = "https://github.com/HPCI-Lab/yProv4ML_MLflow_Plugin"
+"Bug Tracker" = "https://github.com/HPCI-Lab/yProv4ML_MLflow_Plugin/issues"
+Documentation = "https://hpci-lab.github.io/yProv4ML"
 
+# ---------------------------------------------------------------------------
+# Optional dependency groups
+# ---------------------------------------------------------------------------
+[project.optional-dependencies]
+examples = [
+  "torch>=2.0.0",
+  "torchvision>=0.15.0",
+  "numpy>=1.23",
+  "codecarbon>=2.3.0",
+  "psutil>=5.9.0",
+]
+
+# ---------------------------------------------------------------------------
+# MLflow plugin entry points — this is what makes the plugin work
+# ---------------------------------------------------------------------------
 [project.entry-points."mlflow.tracking_store"]
-"yprov+file" = "yprov_mlflow_plugin.tracking:YProvTrackingStore"
-"yprov+http" = "yprov_mlflow_plugin.tracking:YProvTrackingStore"
+"yprov+file"  = "yprov_mlflow_plugin.tracking:YProvTrackingStore"
+"yprov+http"  = "yprov_mlflow_plugin.tracking:YProvTrackingStore"
 "yprov+https" = "yprov_mlflow_plugin.tracking:YProvTrackingStore"
 
 [project.entry-points."mlflow.artifact_repository"]
-"yprov+file" = "yprov_mlflow_plugin.artifacts:YProvArtifactRepo"
+"yprov+file"  = "yprov_mlflow_plugin.artifacts:YProvArtifactRepo"
 "yprov+http"  = "yprov_mlflow_plugin.artifacts:YProvArtifactRepo"
 "yprov+https" = "yprov_mlflow_plugin.artifacts:YProvArtifactRepo"
 
+# ---------------------------------------------------------------------------
+# Build: only ship the plugin package itself, not examples/src/test
+# ---------------------------------------------------------------------------
+[tool.setuptools.packages.find]
+where   = ["."]
+include = ["yprov_mlflow_plugin*"]
+
+# ---------------------------------------------------------------------------
+# Tool configuration
+# ---------------------------------------------------------------------------
 [tool.pytest.ini_options]
 testpaths = ["test"]
+addopts   = "-v --tb=short"
+
+[tool.ruff]
+line-length    = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
